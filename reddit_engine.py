@@ -125,36 +125,38 @@ def login_and_search_reddit(target="Barca", mode="sub"):
                         box = target_el.bounding_box()
                         if box:
                             print(f"Found bounding box for target element: {box}, clicking directly...")
-                            page.mouse.click(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+                            # Geser kursor ke tombol, tekan down dan up (klik fisik asli)
+                            page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+                            time.sleep(0.5)
+                            page.mouse.down()
+                            time.sleep(0.2)
+                            page.mouse.up()
                             time.sleep(3)
                 except Exception as e:
                     print(f"Bounding box click error: {e}")
 
-                # Coba deep DOM traversal dispatch event mouse click via JS
-                page.evaluate("""() => {
-                    const clickTarget = (root) => {
-                        const all = root.querySelectorAll('*');
-                        for (let el of all) {
-                            if (el.innerText && el.innerText.trim().toLowerCase().includes('email me a one-time link')) {
-                                const rect = el.getBoundingClientRect();
-                                if (rect.width > 0 && rect.height > 0) {
-                                    ['mousedown', 'mouseup', 'click'].forEach(evtType => {
-                                        el.dispatchEvent(new MouseEvent(evtType, { bubbles: true, cancelable: true, view: window }));
-                                    });
-                                    if (el.closest('button, a, [role="button"]')) {
-                                        el.closest('button, a, [role="button"]').click();
-                                    }
+                # Coba deep DOM traversal click via JS
+                try:
+                    page.evaluate("""() => {
+                        const clickTarget = (root) => {
+                            const all = root.querySelectorAll('*');
+                            for (let el of all) {
+                                if (el.innerText && el.innerText.trim().toLowerCase().includes('email me a one-time link')) {
+                                    el.click();
+                                    const parentBtn = el.closest('button, a, [role="button"]');
+                                    if (parentBtn) parentBtn.click();
                                     return true;
                                 }
+                                if (el.shadowRoot) {
+                                    if (clickTarget(el.shadowRoot)) return true;
+                                }
                             }
-                            if (el.shadowRoot) {
-                                if (clickTarget(el.shadowRoot)) return true;
-                            }
-                        }
-                        return false;
-                    };
-                    clickTarget(document);
-                }""")
+                            return false;
+                        };
+                        clickTarget(document);
+                    }""")
+                except Exception as e:
+                    print(f"JS click error: {e}")
                 time.sleep(3)
 
             # Verifikasi akhir keberadaan teks target
