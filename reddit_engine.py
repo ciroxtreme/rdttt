@@ -96,13 +96,25 @@ def inspect_real_screen_state(page, context):
         const bodyText = document.body ? document.body.innerText : '';
         const bodyLower = bodyText.toLowerCase();
         const title = document.title || '';
-        const hasPosts = document.querySelectorAll('shreddit-post').length;
+        const hasPosts = document.querySelectorAll('shreddit-post, [data-testid="search-post-unit"], [data-testid="search-post-with-content-preview"], [data-testid="search-sdui-comment-unit"]').length;
+        let searchSort = null;
+        const trackers = document.querySelectorAll('search-telemetry-tracker[data-faceplate-tracking-context]');
+        for (const tr of trackers) {
+            try {
+                const ctx = JSON.parse(tr.getAttribute('data-faceplate-tracking-context') || '{}');
+                if (ctx && ctx.search && ctx.search.sort) {
+                    searchSort = ctx.search.sort;
+                    break;
+                }
+            } catch (e) {}
+        }
         return {
             url: location.href,
             title,
             userLoggedInAttr,
             stepName,
             hasPosts,
+            searchSort,
             isBlocked: bodyLower.includes('blocked by network security') || bodyLower.includes('prove your humanity'),
             isMagicInput: bodyLower.includes('where should we send the link to'),
             isMagicSent: bodyLower.includes('check your inbox') || bodyLower.includes('we emailed a link to'),
@@ -127,7 +139,7 @@ def inspect_real_screen_state(page, context):
 
     dom_info["state"] = state
     dom_info["has_reddit_session"] = has_reddit_session
-    print(f"🧭 [STATE INSPECTOR] Posisi Nyata: {state} | URL: {dom_info['url']} | user-logged-in={dom_info['userLoggedInAttr']} | posts={dom_info['hasPosts']}")
+    print(f"🧭 [STATE INSPECTOR] Posisi Nyata: {state} | URL: {dom_info['url']} | user-logged-in={dom_info['userLoggedInAttr']} | items={dom_info['hasPosts']} | sort={dom_info.get('searchSort')}")
     return dom_info
 
 def request_magic_link_direct_api(page, email):
@@ -234,14 +246,38 @@ def run_session_workflow(target, mode, proxy_cfg):
         page = context.new_page()
         return execute_on_page(page, context, target, mode, has_session, proxy_label)
 
+def format_iso_to_wib(iso_str):
+    if not iso_str:
+        return "Baru saja"
+    try:
+        from datetime import datetime, timezone, timedelta
+        clean = iso_str.replace("Z", "+00:00")
+        if clean.endswith("+0000"):
+            clean = clean[:-5] + "+00:00"
+        dt = datetime.fromisoformat(clean)
+        now = datetime.now(timezone.utc)
+        diff_sec = max(0, int((now - dt).total_seconds()))
+        if diff_sec < 60:
+            rel = f"{diff_sec} dtk lalu"
+        elif diff_sec < 3600:
+            rel = f"{diff_sec // 60} mnt lalu"
+        elif diff_sec < 86400:
+            rel = f"{diff_sec // 3600} jam lalu"
+        else:
+            rel = f"{diff_sec // 86400} hari lalu"
+        wib = dt.astimezone(timezone(timedelta(hours=7)))
+        return f"{rel} ({wib.strftime('%d %b %H.%M')} WIB)"
+    except Exception:
+        return iso_str[:16]
+
 def execute_on_page(page, context, target, mode, has_session, proxy_label):
     if mode == "sub":
         sub_name = target.replace("r/", "").strip()
-        target_url = f"https://www.reddit.com/r/{sub_name}/"
-        label = f"r/{sub_name}"
+        target_url = f"https://www.reddit.com/r/{sub_name}/new/"
+        label = f"r/{sub_name} (New)"
     else:
-        target_url = f"https://www.reddit.com/search/?q={urllib.parse.quote(target)}&sort=relevance"
-        label = f"Reddit Search '{target}'"
+        target_url = f"https://www.reddit.com/search/?q={urllib.parse.quote(target)}&sort=new"
+        label = f"Reddit Search '{target}' (SORT=NEW)"
 
     need_login = True
     if has_session:
@@ -252,7 +288,7 @@ def execute_on_page(page, context, target, mode, has_session, proxy_label):
             state_info = inspect_real_screen_state(page, context)
             if state_info["state"] in ("STATE_LOGGED_IN_VERIFIED", "STATE_SESSION_COOKIE_PRESENT") and not state_info["isBlocked"]:
                 need_login = False
-                print(f"✅ Sesi terverifikasi aktif! Posisi nyata: {state_info['state']}")
+                print(f"✅ Sesi terverifikasi aktif! Posisi nyata: {state_info['state']} | sort={state_info.get('searchSort')}")
             elif state_info["isBlocked"]:
                 print(f"⚠️ Koneksi {proxy_label} terkena blokir jaringan padahal punya sesi.")
                 return "BLOCKED_WITH_SESSION"
@@ -328,15 +364,21 @@ def execute_on_page(page, context, target, mode, has_session, proxy_label):
         page.goto(target_url, timeout=50000, wait_until="domcontentloaded")
         time.sleep(5)
 
-    # Pastikan kita sudah di halaman target, jika belum maka navigasi
-    if target.lower() not in page.url.lower():
+    # Pastikan kita sudah di halaman target & jika mode search wajib sort=new (Anti-Buta Guard)
+    if mode == "search" and "sort=new" not in page.url.lower():
         page.goto(target_url, timeout=50000, wait_until="domcontentloaded")
         time.sleep(5)
 
     final_state = inspect_real_screen_state(page, context)
-    for _ in range(5):
-        page.mouse.wheel(0, 1000)
-        time.sleep(1.8)
+    if mode == "search" and final_state.get("searchSort") and final_state.get("searchSort") != "NEW":
+        print(f"⚠️ [ANTI-BUTA GUARD] Terdeteksi sort={final_state.get('searchSort')}, memaksa navigasi ulang ke type=posts&sort=new...")
+        page.goto(f"https://www.reddit.com/search/?q={urllib.parse.quote(target)}&type=posts&sort=new", timeout=50000, wait_until="domcontentloaded")
+        time.sleep(5)
+        final_state = inspect_real_screen_state(page, context)
+
+    for _ in range(3):
+        page.mouse.wheel(0, 900)
+        time.sleep(1.2)
 
     page.screenshot(path="reddit_snapshot.png")
 
@@ -344,61 +386,221 @@ def execute_on_page(page, context, target, mode, has_session, proxy_label):
         const results = [];
         const seen = new Set();
 
-        const posts = document.querySelectorAll('shreddit-post');
-        posts.forEach(p => {
-            const title = p.getAttribute('post-title') || (p.querySelector('[slot="title"]') ? p.querySelector('[slot="title"]').innerText.trim() : '');
-            const author = p.getAttribute('author') || 'Reddit User';
-            const score = p.getAttribute('score') || '0';
-            const comments = p.getAttribute('comment-count') || '0';
-            const permalink = p.getAttribute('permalink') || '';
-            const fullUrl = permalink.startsWith('/') ? 'https://www.reddit.com' + permalink : permalink;
+        // 1. Ekstraksi presisi untuk halaman Search (search-post-unit / search-post-with-content-preview)
+        const searchUnits = document.querySelectorAll('[data-testid="search-post-unit"], [data-testid="search-post-with-content-preview"]');
+        searchUnits.forEach(u => {
+            let sub = '';
+            let author = '';
+            let title = '';
+            const trackers = u.querySelectorAll('search-telemetry-tracker[data-faceplate-tracking-context]');
+            trackers.forEach(tr => {
+                try {
+                    const ctx = JSON.parse(tr.getAttribute('data-faceplate-tracking-context') || '{}');
+                    if (ctx.subreddit && ctx.subreddit.name && !sub) sub = 'r/' + ctx.subreddit.name;
+                    if (ctx.profile && ctx.profile.name && !author) author = ctx.profile.name;
+                    if (ctx.post && ctx.post.title && !title) title = ctx.post.title;
+                } catch (e) {}
+            });
+
+            const titleEl = u.querySelector('a[data-testid="post-title-text"], a[data-testid="post-title"]');
+            if (!title && titleEl) title = titleEl.innerText.trim();
+            const href = titleEl ? (titleEl.getAttribute('href') || '') : '';
+            const fullUrl = href.startsWith('/') ? 'https://www.reddit.com' + href : href;
+
+            const timeEl = u.querySelector('faceplate-timeago, time');
+            const ts = timeEl ? (timeEl.getAttribute('ts') || timeEl.getAttribute('datetime') || '') : '';
+
+            const counterRow = u.querySelector('[data-testid="search-counter-row"]');
+            let score = '0';
+            let comments = '0';
+            if (counterRow) {
+                const nums = counterRow.querySelectorAll('faceplate-number');
+                if (nums.length >= 1) score = nums[0].getAttribute('number') || nums[0].innerText.trim() || '0';
+                if (nums.length >= 2) comments = nums[1].getAttribute('number') || nums[1].innerText.trim() || '0';
+            }
+
+            let snippet = '';
+            const previewEl = u.querySelector('[data-testid="search-post-content-preview"], p');
+            if (previewEl && !previewEl.closest('[data-testid="search-counter-row"]')) {
+                const txt = previewEl.innerText.trim();
+                if (txt && txt !== title && !txt.includes('votes') && txt.length > 15) {
+                    snippet = txt.slice(0, 260);
+                }
+            }
 
             if (title && !seen.has(title)) {
                 seen.add(title);
-                results.push({ title, author, score, comments, url: fullUrl });
+                results.push({ title, sub: sub || 'r/reddit', author: author || 'redditor', ts, score, comments, snippet, url: fullUrl });
             }
         });
 
-        if (results.length === 0) {
-            const links = document.querySelectorAll('a[data-testid="post-title"], a[href*="/comments/"]');
-            links.forEach(a => {
-                const text = a.innerText.trim();
-                const href = a.getAttribute('href') || '';
-                if (text && text.length > 5 && !seen.has(text) && href.includes('/comments/')) {
-                    seen.add(text);
-                    const fullUrl = href.startsWith('/') ? 'https://www.reddit.com' + href : href;
-                    results.push({ title: text, author: 'Reddit User', score: '-', comments: '-', url: fullUrl });
-                }
-            });
-        }
-        return results.slice(0, 20);
+        // 2. Ekstraksi untuk halaman Subreddit (shreddit-post)
+        const posts = document.querySelectorAll('shreddit-post');
+        posts.forEach(p => {
+            const title = p.getAttribute('post-title') || (p.querySelector('[slot="title"]') ? p.querySelector('[slot="title"]').innerText.trim() : '');
+            const sub = p.getAttribute('subreddit-prefixed-name') || '';
+            const author = p.getAttribute('author') || 'redditor';
+            const score = p.getAttribute('score') || '0';
+            const comments = p.getAttribute('comment-count') || '0';
+            const ts = p.getAttribute('created-timestamp') || '';
+            const permalink = p.getAttribute('permalink') || '';
+            const fullUrl = permalink.startsWith('/') ? 'https://www.reddit.com' + permalink : permalink;
+            const bodySlot = p.querySelector('[slot="text-body"]');
+            const snippet = bodySlot ? bodySlot.innerText.trim().replace(/\\s+/g, ' ').slice(0, 280) : '';
+
+            if (title && !seen.has(title)) {
+                seen.add(title);
+                results.push({ title, sub, author, ts, score, comments, snippet, url: fullUrl });
+            }
+        });
+
+        return results.slice(0, 12);
     }""")
 
-    print(f"Total unique posts collected: {len(posts_data)}")
+    print(f"Total unique posts collected: {len(posts_data)} (verified sort={final_state.get('searchSort')})")
 
-    if posts_data:
-        results_text = []
-        for idx, p in enumerate(posts_data[:15], 1):
-            item = f"{idx}. 📌 {p['title']}\n   👤 u/{p['author']} | ⬆️ {p['score']} | 💬 {p['comments']} komentar\n   🔗 {p['url']}"
-            results_text.append(item)
+    comments_data = []
+    comments_state = None
+    if mode == "search":
+        comments_url = f"https://www.reddit.com/search/?q={urllib.parse.quote(target)}&type=comments&sort=new"
+        print(f"💬 Mengambil isi komentar & diskusi live terbaru dari {comments_url}...")
+        try:
+            page.goto(comments_url, timeout=45000, wait_until="domcontentloaded")
+            time.sleep(4)
+            comments_state = inspect_real_screen_state(page, context)
+            for _ in range(3):
+                page.mouse.wheel(0, 900)
+                time.sleep(1.0)
+            page.screenshot(path="reddit_comments_new.png")
 
-        header = f"🔥 Postingan Terhangat di {label} ({len(results_text)} Diskusi | State: {final_state['state']}):\n\n"
-        report = header + "\n\n───────────────────\n\n".join(results_text)
+            comments_data = page.evaluate("""() => {
+                const list = [];
+                const seenBody = new Set();
+                const units = document.querySelectorAll('[data-testid="search-sdui-comment-unit"]');
+                units.forEach(u => {
+                    let sub = '';
+                    let postTitle = '';
+                    const trackers = u.querySelectorAll('search-telemetry-tracker[data-faceplate-tracking-context]');
+                    trackers.forEach(tr => {
+                        try {
+                            const ctx = JSON.parse(tr.getAttribute('data-faceplate-tracking-context') || '{}');
+                            if (ctx.subreddit && ctx.subreddit.name && !sub) sub = 'r/' + ctx.subreddit.name;
+                            if (ctx.post && ctx.post.title && !postTitle) postTitle = ctx.post.title;
+                        } catch (e) {}
+                    });
 
-        if len(report) > 3800:
-            mid = len(results_text) // 2
-            chunk1 = f"🔥 Postingan Terhangat di {label} (Bagian 1):\n\n" + "\n\n───────────────────\n\n".join(results_text[:mid])
-            chunk2 = f"🔥 Lanjutan {label} (Bagian 2):\n\n" + "\n\n───────────────────\n\n".join(results_text[mid:])
-            send_telegram(chunk1)
-            time.sleep(0.6)
-            send_telegram(chunk2)
-        else:
-            send_telegram(report)
+                    const userEl = u.querySelector('a[href^="/user/"]');
+                    let author = userEl ? userEl.innerText.trim() : '';
+                    if (!author && userEl) {
+                        const m = (userEl.getAttribute('href') || '').match(/\\/user\\/([^/]+)/);
+                        if (m) author = m[1];
+                    }
+                    if (author.toLowerCase() === 'automoderator') return;
 
-        send_telegram_photo("reddit_snapshot.png", f"📸 Bukti Nyata Reddit: {label} (user-logged-in={final_state['userLoggedInAttr']})")
+                    const timeEls = u.querySelectorAll('faceplate-timeago, time');
+                    const ts = timeEls.length > 0 ? (timeEls[timeEls.length - 1].getAttribute('ts') || '') : '';
+
+                    const bodyEl = u.querySelector('.i18n-search-comment-content, [data-testid="search-comment-content"]');
+                    let body = bodyEl ? bodyEl.innerText.trim().replace(/\\s+/g, ' ') : '';
+                    if (!body || body.length < 20) return;
+                    if (body.includes('check out the rules') || body.includes('I am a bot')) return;
+
+                    const numEl = u.querySelector('faceplate-number');
+                    const votes = numEl ? (numEl.getAttribute('number') || numEl.innerText.trim() || '1') : '1';
+
+                    const linkEl = u.querySelector('a[href*="/comments/"]');
+                    const href = linkEl ? (linkEl.getAttribute('href') || '') : '';
+                    const url = href.startsWith('/') ? 'https://www.reddit.com' + href : href;
+
+                    const normKey = body.slice(0, 120).toLowerCase();
+                    if (!seenBody.has(normKey)) {
+                        seenBody.add(normKey);
+                        list.push({
+                            sub: sub || 'r/reddit',
+                            postTitle: postTitle || 'Diskusi Reddit',
+                            author: author || 'redditor',
+                            ts,
+                            votes,
+                            body: body.slice(0, 360),
+                            url
+                        });
+                    }
+                });
+                return list.slice(0, 8);
+            }""")
+            print(f"Total unique live comments collected: {len(comments_data)} (verified sort={comments_state.get('searchSort')})")
+        except Exception as ce:
+            print(f"Warning comment extraction: {ce}")
+
+    if posts_data or comments_data:
+        sort_badge = final_state.get("searchSort") or "NEW"
+        if posts_data:
+            post_lines = []
+            for idx, p in enumerate(posts_data[:8], 1):
+                wib_str = format_iso_to_wib(p.get("ts", ""))
+                sub_prefix = f"[{p['sub']}] " if p.get("sub") else ""
+                line = (
+                    f"{idx}. 📌 {sub_prefix}{p['title']}\n"
+                    f"   🕒 {wib_str} | 👤 u/{p['author']} | ⬆️ {p['score']} | 💬 {p['comments']}\n"
+                )
+                if p.get("snippet"):
+                    line += f"   📝 \"{p['snippet']}...\"\n"
+                line += f"   🔗 {p['url']}"
+                post_lines.append(line)
+
+            msg_posts = (
+                f"🔥 Postingan TERBARU di {label} (Terverifikasi DOM sort={sort_badge} | {len(post_lines)} Thread):\n\n"
+                + "\n\n───────────────────\n\n".join(post_lines)
+            )
+            if len(msg_posts) > 3900:
+                send_telegram(msg_posts[:3900])
+            else:
+                send_telegram(msg_posts)
+            time.sleep(0.5)
+
+        if comments_data:
+            comm_sort_badge = (comments_state or {}).get("searchSort") or "NEW"
+            comm_lines = []
+            for idx, c in enumerate(comments_data[:8], 1):
+                wib_str = format_iso_to_wib(c.get("ts", ""))
+                line = (
+                    f"{idx}. 💬 [{c['sub']}] u/{c['author']} • 🕒 {wib_str} (⬆️ {c['votes']})\n"
+                    f"   🧵 Thread: {c['postTitle'][:80]}\n"
+                    f"   🗣️ \"{c['body']}\"\n"
+                    f"   🔗 {c['url']}"
+                )
+                comm_lines.append(line)
+
+            msg_comms = (
+                f"⚡ Opini & Komentar LIVE TERBARU Reddit '{target}' (Terverifikasi DOM sort={comm_sort_badge} | {len(comm_lines)} Komentar):\n\n"
+                + "\n\n───────────────────\n\n".join(comm_lines)
+            )
+            if len(msg_comms) > 3900:
+                mid = len(comm_lines) // 2
+                send_telegram(
+                    f"⚡ Opini & Komentar LIVE TERBARU Reddit '{target}' (Bagian 1 | sort={comm_sort_badge}):\n\n"
+                    + "\n\n───────────────────\n\n".join(comm_lines[:mid])
+                )
+                time.sleep(0.5)
+                send_telegram(
+                    f"⚡ Lanjutan Komentar LIVE Reddit '{target}' (Bagian 2 | sort={comm_sort_badge}):\n\n"
+                    + "\n\n───────────────────\n\n".join(comm_lines[mid:])
+                )
+            else:
+                send_telegram(msg_comms)
+
+        send_telegram_photo(
+            "reddit_snapshot.png",
+            f"📸 Bukti Layar Posts: {label} (DOM sort={sort_badge} | user-logged-in={final_state['userLoggedInAttr']})"
+        )
+        if os.path.exists("reddit_comments_new.png") and comments_data:
+            send_telegram_photo(
+                "reddit_comments_new.png",
+                f"📸 Bukti Layar Komentar Live: '{target}' (DOM sort={(comments_state or {}).get('searchSort')})"
+            )
         return "SUCCESS"
     else:
-        send_telegram_photo("reddit_snapshot.png", f"⚠️ Posisi: {final_state['state']} | URL: {final_state['url']} | Tidak ada shreddit-post yang ditemukan.")
+        send_telegram_photo("reddit_snapshot.png", f"⚠️ Posisi: {final_state['state']} | URL: {final_state['url']} | Tidak ada hasil yang ditemukan.")
         return "NO_POSTS"
 
 def login_and_search_reddit(target="Barca", mode="sub"):
