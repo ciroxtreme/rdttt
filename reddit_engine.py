@@ -105,45 +105,62 @@ def login_and_search_reddit(target="Barca", mode="sub"):
             page.goto("https://www.reddit.com/login/", timeout=45000, wait_until="domcontentloaded")
             time.sleep(6)
             
-            # Cari dan klik tombol "Email me a one-time link" via XPath / Playwright locators / JS click
+            # Cari dan klik tombol "Email me a one-time link" sampai teks target muncul
             print("Searching for 'Email me a one-time link' button...")
-            clicked = False
-            try:
-                # Coba Playwright selector case-insensitive
-                btn = page.locator("button, a, div[role='button']").filter(has_text="Email me a one-time link").first
-                if btn.count() > 0:
-                    btn.click(force=True)
-                    clicked = True
-                    print("Clicked via locator filter has_text!")
-            except Exception as e:
-                print(f"Locator click error: {e}")
+            target_found = False
+            for attempt in range(1, 10):
+                # 1. Cek apakah teks target sudah muncul di layar (menandakan sudah di halaman form one-time link)
+                body_text = page.evaluate("() => document.body ? document.body.innerText : ''").lower()
+                if "where should we send the link to" in body_text:
+                    print(f"Target found: 'where should we send the link to' is present on page!")
+                    target_found = True
+                    break
 
-            if not clicked:
-                # Coba lewat evaluate Javascript menembus shadow DOM
-                clicked = page.evaluate("""() => {
-                    const findAndClick = (root) => {
-                        const elements = root.querySelectorAll('*');
-                        for (let el of elements) {
-                            if (el.innerText && el.innerText.includes('Email me a one-time link')) {
+                print(f"Attempt {attempt}: Clicking 'Email me a one-time link'...")
+                # Coba Playwright locator
+                try:
+                    candidates = page.locator("button, a, div[role='button'], span").filter(has_text="Email me a one-time link").all()
+                    for c in candidates:
+                        if c.is_visible():
+                            c.click(force=True)
+                            time.sleep(2)
+                            break
+                except Exception as e:
+                    print(f"Locator click error: {e}")
+
+                # Coba deep DOM traversal click via JS
+                page.evaluate("""() => {
+                    const clickTarget = (root) => {
+                        const all = root.querySelectorAll('*');
+                        for (let el of all) {
+                            if (el.childNodes.length === 1 && el.innerText && el.innerText.trim().toLowerCase().includes('email me a one-time link')) {
                                 el.click();
+                                if (el.parentElement) el.parentElement.click();
                                 return true;
                             }
                             if (el.shadowRoot) {
-                                if (findAndClick(el.shadowRoot)) return true;
+                                if (clickTarget(el.shadowRoot)) return true;
                             }
                         }
                         return false;
                     };
-                    return findAndClick(document);
+                    clickTarget(document);
                 }""")
-                if clicked:
-                    print("Clicked 'Email me a one-time link' via JS deep traversal!")
+                time.sleep(3)
 
-            time.sleep(4)
-            page.screenshot(path="reddit_clicked_email_link.png")
-            send_telegram_photo("reddit_clicked_email_link.png", "Status klik tombol Email me a one-time link")
+            # Verifikasi akhir keberadaan teks target
+            body_text = page.evaluate("() => document.body ? document.body.innerText : ''").lower()
+            if "where should we send the link to" not in body_text:
+                page.screenshot(path="reddit_clicked_email_link.png")
+                send_telegram_photo("reddit_clicked_email_link.png", "❌ Gagal masuk ke halaman: 'where should we send the link to'")
+                send_telegram("❌ Gagal menavigasi ke halaman 'where should we send the link to'.")
+                sys.exit(1)
+
+            print("SUCCESS: Halaman 'where should we send the link to' aktif!")
+            page.screenshot(path="reddit_target_page.png")
+            send_telegram_photo("reddit_target_page.png", "✅ Berhasil masuk ke halaman 'Where should we send the link to'!")
             
-            # Input email address di form one-time link
+            # Input email address di form one-time link (sesuai screenshot: Email * dan tombol Continue)
             email_input = page.locator("input[type='email'], input[name='email'], input#login-email, input").first
             if email_input.count() > 0:
                 print(f"Filling email {REDDIT_EMAIL}...")
@@ -152,26 +169,18 @@ def login_and_search_reddit(target="Barca", mode="sub"):
                 except Exception:
                     pass
                 email_input.fill(REDDIT_EMAIL)
-                time.sleep(1)
-                
-                # Submit email request (tekan Enter pada input field atau klik tombol yang terlihat)
-                print("Submitting email request via keyboard Enter & visible submit button...")
-                page.keyboard.press("Enter")
                 time.sleep(2)
                 
-                # Coba cari tombol submit khusus yang visible jika Enter belum ter-trigger
-                try:
-                    submit_candidates = page.locator("button").all()
-                    for b in submit_candidates:
-                        if b.is_visible():
-                            btxt = b.inner_text().lower()
-                            if any(k in btxt for k in ["email me", "send", "continue", "submit"]):
-                                print(f"Clicking visible submit candidate: '{btxt}'")
-                                b.click()
-                                break
-                except Exception as e:
-                    print(f"Candidate submit button click ignored: {e}")
-                    
+                # Klik tombol "Continue" yang aktif
+                print("Clicking 'Continue' button...")
+                continue_btn = page.locator("button:has-text('Continue'), button[type='submit']").first
+                if continue_btn.count() > 0:
+                    try:
+                        continue_btn.click(force=True)
+                    except Exception:
+                        page.keyboard.press("Enter")
+                else:
+                    page.keyboard.press("Enter")
                 time.sleep(6)
                 
                 page.screenshot(path="reddit_email_sent.png")
