@@ -49,6 +49,7 @@ jobs:
           REDDIT_USERNAME: ${{ secrets.REDDIT_USERNAME }}
           REDDIT_PASSWORD: ${{ secrets.REDDIT_PASSWORD }}
           REDDIT_EMAIL: ${{ secrets.REDDIT_EMAIL }}
+          WEBSHARE_PROXY: ${{ secrets.WEBSHARE_PROXY }}
           PYTHONUNBUFFERED: "1"
         run: |
           xvfb-run -a python -u reddit_engine.py "${{ github.event.inputs.mode }}" "${{ github.event.inputs.target }}"
