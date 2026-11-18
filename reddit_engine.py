@@ -100,119 +100,61 @@ def login_and_search_reddit(target="Barca", mode="sub"):
                 print(f"Session check error: {e}")
 
         if need_login:
-            print(f"Starting login flow at https://www.reddit.com/login/ via Email One-Time Link ({REDDIT_EMAIL})...")
-            send_telegram(f"🔑 Membuka login Reddit via Email One-Time Link untuk {REDDIT_EMAIL}...")
+            print(f"Starting login flow at https://www.reddit.com/login/...")
+            send_telegram(f"🔑 Membuka login Reddit. Silakan minta magic link dari HP/browser Anda ke {REDDIT_EMAIL}, atau biarkan runner mencoba...")
             page.goto("https://www.reddit.com/login/", timeout=45000, wait_until="domcontentloaded")
-            time.sleep(6)
+            time.sleep(5)
             
-            # Cari dan klik tombol "Email me a one-time link" sampai teks target muncul
-            print("Searching for 'Email me a one-time link' button...")
-            target_found = False
-            for attempt in range(1, 15):
-                # 1. Cek apakah teks target sudah muncul di layar (menandakan sudah di halaman form one-time link)
+            # Coba klik tombol "Email me a one-time link"
+            for attempt in range(1, 6):
                 body_text = page.evaluate("() => document.body ? document.body.innerText : ''").lower()
                 if "where should we send the link to" in body_text:
-                    print(f"Target found: 'where should we send the link to' is present on page!")
-                    target_found = True
+                    print("Found 'where should we send the link to'!")
                     break
-
-                print(f"Attempt {attempt}: Clicking 'Email me a one-time link'...")
-                
-                # Gunakan locator Playwright khusus
                 try:
                     el = page.locator("button, a, div[role='button']").filter(has_text="Email me a one-time link").first
                     if el.count() > 0:
-                        el.scroll_into_view_if_needed()
-                        el.click(force=True, delay=100)
-                except Exception as e:
-                    print(f"Locator click: {e}")
-
-                # Gunakan evaluate click langsung pada button/a yang berisi teks tersebut
-                try:
-                    page.evaluate("""() => {
-                        const xpath = "//*[contains(text(), 'Email me a one-time link')]";
-                        const res = document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-                        if (res) {
-                            res.click();
-                            let target = res.closest('button, a, [role="button"]') || res.parentElement;
-                            if (target) {
-                                target.click();
-                                target.dispatchEvent(new Event('click', { bubbles: true }));
-                            }
-                        }
-                    }""")
-                except Exception as e:
-                    print(f"XPath click: {e}")
-                    
-                time.sleep(2)
-                
-                # Cek lagi setelah klik
-                body_text = page.evaluate("() => document.body ? document.body.innerText : ''").lower()
-                if "where should we send the link to" in body_text:
-                    print(f"Target found on attempt {attempt}!")
-                    target_found = True
-                    break
-
-            # Verifikasi akhir keberadaan teks target
-            body_text = page.evaluate("() => document.body ? document.body.innerText : ''").lower()
-            if "where should we send the link to" not in body_text:
-                page.screenshot(path="reddit_clicked_email_link.png")
-                send_telegram_photo("reddit_clicked_email_link.png", "❌ Gagal masuk ke halaman: 'where should we send the link to'")
-                send_telegram("❌ Gagal menavigasi ke halaman 'where should we send the link to'.")
-                sys.exit(1)
-
-            print("SUCCESS: Halaman 'where should we send the link to' aktif!")
-            page.screenshot(path="reddit_target_page.png")
-            send_telegram_photo("reddit_target_page.png", "✅ Berhasil masuk ke halaman 'Where should we send the link to'!")
-            
-            # Input email address di form one-time link (sesuai screenshot: Email * dan tombol Continue)
-            email_input = page.locator("input[type='email'], input[name='email'], input#login-email, input").first
-            if email_input.count() > 0:
-                print(f"Filling email {REDDIT_EMAIL}...")
-                try:
-                    email_input.click(force=True)
+                        el.click(force=True)
                 except Exception:
                     pass
-                email_input.fill(REDDIT_EMAIL)
                 time.sleep(2)
-                
-                # Klik tombol "Continue" yang aktif
-                print("Clicking 'Continue' button...")
-                continue_btn = page.locator("button:has-text('Continue'), button[type='submit']").first
-                if continue_btn.count() > 0:
-                    try:
-                        continue_btn.click(force=True)
-                    except Exception:
-                        page.keyboard.press("Enter")
-                else:
+
+            body_text = page.evaluate("() => document.body ? document.body.innerText : ''").lower()
+            if "where should we send the link to" in body_text:
+                page.screenshot(path="reddit_target_page.png")
+                send_telegram_photo("reddit_target_page.png", "✅ Halaman 'Where should we send the link to' aktif!")
+                email_input = page.locator("input[type='email'], input[name='email'], input#login-email, input").first
+                if email_input.count() > 0:
+                    email_input.fill(REDDIT_EMAIL)
+                    time.sleep(1)
                     page.keyboard.press("Enter")
-                time.sleep(6)
-                
-                page.screenshot(path="reddit_email_sent.png")
-                send_telegram_photo("reddit_email_sent.png", f"📧 Link telah dikirim ke {REDDIT_EMAIL}!")
-                
-                user_resp = wait_for_telegram_code(f"Buka email {REDDIT_EMAIL}, copy link login atau kode dari Reddit lalu paste ke sini.", timeout_sec=240)
-                if user_resp:
-                    if user_resp.startswith("http://") or user_resp.startswith("https://"):
-                        print(f"Received one-time link: {user_resp}")
-                        send_telegram("🚀 Membuka link one-time login Reddit di browser...")
-                        page.goto(user_resp, timeout=45000, wait_until="domcontentloaded")
-                        time.sleep(10)
-                    else:
-                        print(f"Received code: {user_resp}")
-                        code_input = page.locator("input[data-testid='verification-code-input'], input[name='otp'], input[name='code'], input[type='number'], input[type='text'], input").first
-                        if code_input.count() > 0:
-                            code_input.fill(user_resp)
-                            time.sleep(1)
-                            page.keyboard.press("Enter")
-                            time.sleep(8)
+                    time.sleep(4)
+
+            page.screenshot(path="reddit_waiting_link.png")
+            send_telegram_photo("reddit_waiting_link.png", "⏳ Menunggu Link Login Reddit")
+            
+            # Minta Tuan Ciro paste link login yang masuk ke email
+            user_resp = wait_for_telegram_code(
+                f"Buka email {REDDIT_EMAIL}, copy LINK LOGIN (magic link) dari Reddit lalu kirim ke sini.\n(Jika belum ada, klik 'Email me a one-time link' di browser HP Anda terlebih dahulu lalu paste linknya ke sini).",
+                timeout_sec=300
+            )
+            
+            if user_resp:
+                if user_resp.startswith("http://") or user_resp.startswith("https://"):
+                    print(f"Received one-time magic link: {user_resp}")
+                    send_telegram("🚀 Membuka link login Reddit di browser cloud runner...")
+                    page.goto(user_resp, timeout=50000, wait_until="load")
+                    time.sleep(10)
                 else:
-                    send_telegram("❌ Login dibatalkan karena tidak ada input link/kode dari user.")
-                    sys.exit(1)
+                    print(f"Received code: {user_resp}")
+                    code_input = page.locator("input[data-testid='verification-code-input'], input[name='otp'], input[name='code'], input[type='number'], input[type='text'], input").first
+                    if code_input.count() > 0:
+                        code_input.fill(user_resp)
+                        time.sleep(1)
+                        page.keyboard.press("Enter")
+                        time.sleep(8)
             else:
-                send_telegram("❌ Gagal menemukan kolom input email untuk one-time link!")
-                page.screenshot(path="reddit_no_email_input.png")
-                send_telegram_photo("reddit_no_email_input.png", "Form input email tidak ditemukan")
+                send_telegram("❌ Login dibatalkan karena tidak ada link/kode yang dimasukkan.")
                 sys.exit(1)
 
             # Pastikan cookie sesi tersimpan (HANYA reddit_session asli yang menandakan login berhasil)
