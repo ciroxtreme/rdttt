@@ -101,20 +101,46 @@ def login_and_search_reddit(target="Barca", mode="sub"):
 
         if need_login:
             print(f"Starting login flow at https://www.reddit.com/login/...")
-            send_telegram(f"🔑 Membuka login Reddit. Silakan minta magic link dari HP/browser Anda ke {REDDIT_EMAIL}, atau biarkan runner mencoba...")
+            send_telegram(f"🔑 Membuka login Reddit. Menunggu hydration Faceplate & custom elements...")
             page.goto("https://www.reddit.com/login/", timeout=45000, wait_until="domcontentloaded")
-            time.sleep(5)
             
-            # Coba klik tombol "Email me a one-time link"
-            for attempt in range(1, 6):
+            # 1. Tunggu custom elements & web components ter-hydrate
+            try:
+                page.wait_for_function("""() => {
+                    const els = [...document.querySelectorAll('*')].filter(e => e.localName.includes('-'));
+                    return els.length > 0 && els.every(e => customElements.get(e.localName));
+                }""", timeout=15000)
+            except Exception as e:
+                print(f"Hydration wait notice: {e}")
+            try:
+                page.wait_for_load_state("networkidle", timeout=10000)
+            except Exception:
+                pass
+            time.sleep(3)
+            
+            # 2. Coba klik tombol "Email me a one-time link" via fokus keyboard & native button
+            print("Activating 'Email me a one-time link'...")
+            for attempt in range(1, 8):
                 body_text = page.evaluate("() => document.body ? document.body.innerText : ''").lower()
                 if "where should we send the link to" in body_text:
                     print("Found 'where should we send the link to'!")
                     break
+                    
+                # Cara A: Focus lalu tekan Enter (memicu sintetis browser asli)
                 try:
-                    el = page.locator("button, a, div[role='button']").filter(has_text="Email me a one-time link").first
-                    if el.count() > 0:
-                        el.click(force=True)
+                    btn = page.locator("button, a, div[role='button']").filter(has_text="Email me a one-time link").first
+                    if btn.count() > 0:
+                        btn.focus()
+                        page.keyboard.press("Enter")
+                        time.sleep(1.5)
+                except Exception:
+                    pass
+                    
+                # Cara B: Dispatch native click event
+                try:
+                    btn = page.locator("button, a, div[role='button']").filter(has_text="Email me a one-time link").first
+                    if btn.count() > 0:
+                        btn.click(force=True)
                 except Exception:
                     pass
                 time.sleep(2)
@@ -131,7 +157,7 @@ def login_and_search_reddit(target="Barca", mode="sub"):
                     time.sleep(4)
 
             page.screenshot(path="reddit_waiting_link.png")
-            send_telegram_photo("reddit_waiting_link.png", "⏳ Menunggu Link Login Reddit")
+            send_telegram_photo("reddit_waiting_link.png", "⏳ Status Dialog Login Reddit")
             
             # Minta Tuan Ciro paste link login yang masuk ke email
             user_resp = wait_for_telegram_code(
