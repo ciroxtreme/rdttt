@@ -48,6 +48,7 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           REDDIT_USERNAME: ${{ secrets.REDDIT_USERNAME }}
           REDDIT_PASSWORD: ${{ secrets.REDDIT_PASSWORD }}
+          REDDIT_EMAIL: ${{ secrets.REDDIT_EMAIL }}
           PYTHONUNBUFFERED: "1"
         run: |
           xvfb-run -a python -u reddit_engine.py "${{ github.event.inputs.mode }}" "${{ github.event.inputs.target }}"
