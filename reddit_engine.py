@@ -7,7 +7,7 @@ import urllib.parse
 import requests
 from camoufox.sync_api import Camoufox
 
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "DUMMY_TELEGRAM_TOKEN_PROTECTED")
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "1936436999")
 REDDIT_USERNAME = os.getenv("REDDIT_USERNAME", "Tuanciro")
 REDDIT_PASSWORD = os.getenv("REDDIT_PASSWORD", "ciroxtreme0703")
