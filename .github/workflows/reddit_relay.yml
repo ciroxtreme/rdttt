@@ -1,0 +1,51 @@
+name: Reddit Pulse & Community Relay
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Mode (search / sub)"
+        required: true
+        default: "search"
+      target:
+        description: "Target query atau nama subreddit (misal: Barca, wallstreetbets, BTC)"
+        required: true
+        default: "Barca"
+
+jobs:
+  run-reddit-relay:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GH_PAT }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache Camoufox Browser
+        id: camoufox-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/camoufox
+          key: ${{ runner.os }}-camoufox-browser-v1
+
+      - name: Fast Setup Dependencies
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y --no-install-recommends xvfb curl
+          pip install "camoufox[geoip]" requests
+          if [ ! -d ~/.cache/camoufox ] || [ -z "$(ls -A ~/.cache/camoufox 2>/dev/null)" ]; then
+            camoufox fetch || true
+          fi
+
+      - name: Run Reddit Pulse Engine
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          PYTHONUNBUFFERED: "1"
+        run: |
+          xvfb-run -a python -u reddit_engine.py "${{ github.event.inputs.mode }}" "${{ github.event.inputs.target }}"
