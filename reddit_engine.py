@@ -118,45 +118,51 @@ def login_and_search_reddit(target="Barca", mode="sub"):
 
                 print(f"Attempt {attempt}: Clicking 'Email me a one-time link'...")
                 
-                # Klik langsung via mouse coordinates / bounding box
+                # Cara 1: Locator filter has-text dan click langsung
+                try:
+                    btn = page.locator("a, button, div").filter(has_text="Email me a one-time link").last
+                    if btn.count() > 0:
+                        btn.scroll_into_view_if_needed()
+                        btn.click(force=True, timeout=3000)
+                        time.sleep(2)
+                except Exception as e:
+                    print(f"Playwright click error: {e}")
+
+                # Cara 2: Native mouse coordinates di titik tengah
                 try:
                     target_el = page.get_by_text("Email me a one-time link", exact=False).first
                     if target_el.count() > 0:
                         box = target_el.bounding_box()
                         if box:
-                            print(f"Found bounding box for target element: {box}, clicking directly...")
-                            # Geser kursor ke tombol, tekan down dan up (klik fisik asli)
-                            page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
-                            time.sleep(0.5)
-                            page.mouse.down()
-                            time.sleep(0.2)
-                            page.mouse.up()
-                            time.sleep(3)
+                            print(f"Clicking at ({box['x'] + box['width']/2}, {box['y'] + box['height']/2})...")
+                            page.mouse.click(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+                            time.sleep(2)
                 except Exception as e:
                     print(f"Bounding box click error: {e}")
 
-                # Coba deep DOM traversal click via JS
+                # Cara 3: Pointer down/up dan trigger touch/click event pada elemen terdalam
                 try:
                     page.evaluate("""() => {
-                        const clickTarget = (root) => {
-                            const all = root.querySelectorAll('*');
-                            for (let el of all) {
-                                if (el.innerText && el.innerText.trim().toLowerCase().includes('email me a one-time link')) {
-                                    el.click();
-                                    const parentBtn = el.closest('button, a, [role="button"]');
-                                    if (parentBtn) parentBtn.click();
-                                    return true;
+                        const all = document.querySelectorAll('*');
+                        for (let el of all) {
+                            if (el.innerText && el.innerText.trim() === 'Email me a one-time link') {
+                                el.click();
+                                let p = el.parentElement;
+                                while (p && p !== document.body) {
+                                    p.click();
+                                    if (p.tagName === 'A' || p.tagName === 'BUTTON' || p.getAttribute('role') === 'button') {
+                                        p.click();
+                                        break;
+                                    }
+                                    p = p.parentElement;
                                 }
-                                if (el.shadowRoot) {
-                                    if (clickTarget(el.shadowRoot)) return true;
-                                }
+                                return true;
                             }
-                            return false;
-                        };
-                        clickTarget(document);
+                        }
+                        return false;
                     }""")
                 except Exception as e:
-                    print(f"JS click error: {e}")
+                    print(f"Deep click error: {e}")
                 time.sleep(3)
 
             # Verifikasi akhir keberadaan teks target
