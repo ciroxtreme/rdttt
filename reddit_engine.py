@@ -105,82 +105,104 @@ def login_and_search_reddit(target="Barca", mode="sub"):
             page.goto("https://www.reddit.com/login/", timeout=45000, wait_until="domcontentloaded")
             time.sleep(6)
             
-            # Cek opsi "Email me a one-time link"
-            email_link_btn = page.locator("button:has-text('Email me a one-time link'), a:has-text('Email me a one-time link')").first
-            if email_link_btn.count() > 0:
-                print("Clicking 'Email me a one-time link'...")
+            # Cari dan klik tombol "Email me a one-time link" via XPath / Playwright locators / JS click
+            print("Searching for 'Email me a one-time link' button...")
+            clicked = False
+            try:
+                # Coba Playwright selector case-insensitive
+                btn = page.locator("button, a, div[role='button']").filter(has_text="Email me a one-time link").first
+                if btn.count() > 0:
+                    btn.click(force=True)
+                    clicked = True
+                    print("Clicked via locator filter has_text!")
+            except Exception as e:
+                print(f"Locator click error: {e}")
+
+            if not clicked:
+                # Coba lewat evaluate Javascript menembus shadow DOM
+                clicked = page.evaluate("""() => {
+                    const findAndClick = (root) => {
+                        const elements = root.querySelectorAll('*');
+                        for (let el of elements) {
+                            if (el.innerText && el.innerText.includes('Email me a one-time link')) {
+                                el.click();
+                                return true;
+                            }
+                            if (el.shadowRoot) {
+                                if (findAndClick(el.shadowRoot)) return true;
+                            }
+                        }
+                        return false;
+                    };
+                    return findAndClick(document);
+                }""")
+                if clicked:
+                    print("Clicked 'Email me a one-time link' via JS deep traversal!")
+
+            time.sleep(4)
+            page.screenshot(path="reddit_clicked_email_link.png")
+            send_telegram_photo("reddit_clicked_email_link.png", "Status klik tombol Email me a one-time link")
+            
+            # Input email address di form one-time link
+            email_input = page.locator("input[type='email'], input[name='email'], input#login-email, input").first
+            if email_input.count() > 0:
+                print(f"Filling email {REDDIT_EMAIL}...")
                 try:
-                    email_link_btn.click(force=True)
+                    email_input.click(force=True)
                 except Exception:
                     pass
-                time.sleep(3)
+                email_input.fill(REDDIT_EMAIL)
+                time.sleep(1)
                 
-                # Input email address
-                email_input = page.locator("input[type='email'], input[name='email'], input#login-email, input").first
-                if email_input.count() > 0:
-                    print(f"Filling email {REDDIT_EMAIL}...")
-                    try:
-                        email_input.click(force=True)
-                    except Exception:
-                        pass
-                    email_input.fill(REDDIT_EMAIL)
-                    time.sleep(1)
-                    
-                    # Submit email request
-                    submit_email_btn = page.locator("button[type='submit'], button:has-text('Send email'), button:has-text('Continue'), button:has-text('Email me')").first
-                    if submit_email_btn.count() > 0:
-                        submit_email_btn.click(force=True)
-                    else:
-                        page.keyboard.press("Enter")
-                    time.sleep(5)
-                    
-                    page.screenshot(path="reddit_email_sent.png")
-                    send_telegram_photo("reddit_email_sent.png", f"📧 Link/kode login telah dikirim ke {REDDIT_EMAIL}!")
-                    
-                    user_resp = wait_for_telegram_code(f"Buka email {REDDIT_EMAIL}, copy link login atau kode 6-digit dari Reddit lalu paste ke sini.", timeout_sec=240)
-                    if user_resp:
-                        if user_resp.startswith("http://") or user_resp.startswith("https://"):
-                            print(f"Received one-time link: {user_resp}")
-                            send_telegram("🚀 Membuka link one-time login Reddit di browser...")
-                            page.goto(user_resp, timeout=45000, wait_until="domcontentloaded")
-                            time.sleep(10)
-                        else:
-                            print(f"Received code: {user_resp}")
-                            code_input = page.locator("input[data-testid='verification-code-input'], input[name='otp'], input[name='code'], input[type='number'], input[type='text'], input").first
-                            if code_input.count() > 0:
-                                code_input.fill(user_resp)
-                                time.sleep(1)
-                                page.keyboard.press("Enter")
-                                time.sleep(8)
-                    else:
-                        send_telegram("❌ Login dibatalkan karena tidak ada input link/kode dari user.")
-                        sys.exit(1)
-            else:
-                print("Email one-time link button not found, falling back to credentials...")
-                # Input username
-                user_input = page.locator("input[name='username'], input#login-username, input[autocomplete='username'], input").first
-                if user_input.count() > 0:
-                    user_input.fill(REDDIT_USERNAME)
-                pwd_input = page.locator("input[name='password'], input#login-password, input[type='password']").first
-                if pwd_input.count() > 0:
-                    pwd_input.fill(REDDIT_PASSWORD)
+                # Submit email request
+                submit_btn = page.locator("button[type='submit'], button:has-text('Email me a link'), button:has-text('Send email'), button:has-text('Continue')").first
+                if submit_btn.count() > 0:
+                    submit_btn.click(force=True)
+                else:
                     page.keyboard.press("Enter")
-                time.sleep(8)
-
-            # Pastikan cookie sesi tersimpan
-            cookies = context.cookies()
-            session_cookie = next((c for c in cookies if c.get("name") in ["reddit_session", "token_v2"]), None)
-            if not session_cookie:
-                page.screenshot(path="reddit_login_failed.png")
-                send_telegram_photo("reddit_login_failed.png", "❌ Login Reddit Gagal! Sesi login belum terbentuk.")
-                send_telegram("🛑 Proses dihentikan sesuai instruksi: tidak akan melakukan scraping sebelum login tuntas 100%.")
+                time.sleep(5)
+                
+                page.screenshot(path="reddit_email_sent.png")
+                send_telegram_photo("reddit_email_sent.png", f"📧 Link telah dikirim ke {REDDIT_EMAIL}!")
+                
+                user_resp = wait_for_telegram_code(f"Buka email {REDDIT_EMAIL}, copy link login atau kode dari Reddit lalu paste ke sini.", timeout_sec=240)
+                if user_resp:
+                    if user_resp.startswith("http://") or user_resp.startswith("https://"):
+                        print(f"Received one-time link: {user_resp}")
+                        send_telegram("🚀 Membuka link one-time login Reddit di browser...")
+                        page.goto(user_resp, timeout=45000, wait_until="domcontentloaded")
+                        time.sleep(10)
+                    else:
+                        print(f"Received code: {user_resp}")
+                        code_input = page.locator("input[data-testid='verification-code-input'], input[name='otp'], input[name='code'], input[type='number'], input[type='text'], input").first
+                        if code_input.count() > 0:
+                            code_input.fill(user_resp)
+                            time.sleep(1)
+                            page.keyboard.press("Enter")
+                            time.sleep(8)
+                else:
+                    send_telegram("❌ Login dibatalkan karena tidak ada input link/kode dari user.")
+                    sys.exit(1)
+            else:
+                send_telegram("❌ Gagal menemukan kolom input email untuk one-time link!")
+                page.screenshot(path="reddit_no_email_input.png")
+                send_telegram_photo("reddit_no_email_input.png", "Form input email tidak ditemukan")
                 sys.exit(1)
 
-            print(f"🎉 SUCCESS! Sesi login terverifikasi via {session_cookie.get('name')}!")
+            # Pastikan cookie sesi tersimpan (HANYA reddit_session asli yang menandakan login berhasil)
+            cookies = context.cookies()
+            session_cookie = next((c for c in cookies if c.get("name") == "reddit_session"), None)
+            if not session_cookie:
+                page.screenshot(path="reddit_login_failed.png")
+                send_telegram_photo("reddit_login_failed.png", "❌ Login Reddit Belum Berhasil! Cookie reddit_session belum terbentuk.")
+                send_telegram("🛑 Proses dihentikan: tidak akan melakukan scraping sebelum login tuntas 100%.")
+                sys.exit(1)
+
+            print(f"🎉 SUCCESS! Sesi login resmi terverifikasi via reddit_session!")
             with open(SESSION_FILE, "w") as f:
                 json.dump(cookies, f, indent=2)
             page.screenshot(path="reddit_login_success.png")
-            send_telegram_photo("reddit_login_success.png", f"🎉 Berhasil Login Reddit ({REDDIT_USERNAME})! Sesi tersimpan permanen.")
+            send_telegram_photo("reddit_login_success.png", f"🎉 Berhasil Login Reddit! Sesi tersimpan permanen.")
 
         # 2. HANYA JALAN JIKA LOGIN SUDAH 100% SUKSES:
         if mode == "sub":
