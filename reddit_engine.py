@@ -205,86 +205,60 @@ def login_and_search_reddit(target="Barca", mode="sub"):
         # 2. HANYA JALAN JIKA LOGIN SUDAH 100% SUKSES:
         if mode == "sub":
             sub_name = target.replace("r/", "").strip()
-            url = f"https://www.reddit.com/r/{sub_name}/new/"
-            label = f"r/{sub_name} (Newest Posts)"
+            url = f"https://www.reddit.com/r/{sub_name}/"
+            label = f"r/{sub_name}"
         else:
-            url = f"https://www.reddit.com/search/?q={target}&sort=new"
-            label = f"Reddit Search '{target}' (Sort: New)"
+            url = f"https://www.reddit.com/search/?q={target}&sort=relevance"
+            label = f"Reddit Search '{target}'"
 
         send_telegram(f"🔍 Sesi Login Reddit Aktif! Menjelajahi {label}...")
         print(f"Navigating to {url}...")
-        page.goto(url, timeout=45000, wait_until="load")
+        page.goto(url, timeout=50000, wait_until="domcontentloaded")
+        time.sleep(5)
         
-        # Tunggu sampai selector postingan muncul
-        try:
-            page.wait_for_selector("shreddit-post, article, a[data-testid='post-title']", timeout=15000)
-        except Exception:
-            pass
-            
-        for _ in range(4):
-            page.mouse.wheel(0, 900)
-            time.sleep(1.5)
+        # Scroll perlahan untuk memicu progressive render shadow DOM Reddit
+        for _ in range(5):
+            page.mouse.wheel(0, 1000)
+            time.sleep(2)
             
         page.screenshot(path="reddit_snapshot.png")
         
-        # Ekstraksi postingan Reddit
-        posts_data = []
-        shreddit_posts = page.locator("shreddit-post").all()
-        if shreddit_posts:
-            print(f"Detected {len(shreddit_posts)} shreddit-post elements!")
-            for p in shreddit_posts[:20]:
-                try:
-                    title = p.get_attribute("post-title") or p.locator("a[slot='title']").inner_text().strip()
-                except Exception:
-                    title = "Untitled Post"
-                try:
-                    author = p.get_attribute("author") or "anonymous"
-                except Exception:
-                    author = "anonymous"
-                try:
-                    score = p.get_attribute("score") or "0"
-                except Exception:
-                    score = "0"
-                try:
-                    comments = p.get_attribute("comment-count") or "0"
-                except Exception:
-                    comments = "0"
-                try:
-                    permalink = p.get_attribute("permalink") or ""
-                    post_url = f"https://reddit.com{permalink}" if permalink.startswith("/") else permalink
-                except Exception:
-                    post_url = ""
-
-                if title and title != "Untitled Post":
-                    posts_data.append({
-                        "title": title,
-                        "author": author,
-                        "score": score,
-                        "comments": comments,
-                        "url": post_url
-                    })
-        else:
-            print("Fallback selector search...")
-            post_links = page.locator("a[data-testid='post-title'], a[href*='/comments/']").all()
-            seen_titles = set()
-            for a in post_links:
-                try:
-                    txt = a.inner_text().strip()
-                    href = a.get_attribute("href") or ""
-                    if txt and len(txt) > 5 and txt not in seen_titles:
-                        seen_titles.add(txt)
-                        post_url = f"https://reddit.com{href}" if href.startswith("/") else href
-                        posts_data.append({
-                            "title": txt,
-                            "author": "Reddit User",
-                            "score": "-",
-                            "comments": "-",
-                            "url": post_url
-                        })
-                except Exception:
-                    pass
-                if len(posts_data) >= 20:
-                    break
+        # Ekstraksi postingan Reddit via JS evaluation (menembus shadow root & shreddit-post)
+        posts_data = page.evaluate("""() => {
+            const results = [];
+            const seen = new Set();
+            
+            // 1. Selector shreddit-post custom elements
+            const posts = document.querySelectorAll('shreddit-post');
+            posts.forEach(p => {
+                const title = p.getAttribute('post-title') || (p.querySelector('[slot="title"]') ? p.querySelector('[slot="title"]').innerText.trim() : '');
+                const author = p.getAttribute('author') || 'Reddit User';
+                const score = p.getAttribute('score') || '0';
+                const comments = p.getAttribute('comment-count') || '0';
+                const permalink = p.getAttribute('permalink') || '';
+                const fullUrl = permalink.startsWith('/') ? 'https://www.reddit.com' + permalink : permalink;
+                
+                if (title && !seen.has(title)) {
+                    seen.add(title);
+                    results.push({ title, author, score, comments, url: fullUrl });
+                }
+            });
+            
+            // 2. Fallback: cari tag anchor artikel / feed
+            if (results.length === 0) {
+                const links = document.querySelectorAll('a[data-testid="post-title"], a[href*="/comments/"]');
+                links.forEach(a => {
+                    const text = a.innerText.trim();
+                    const href = a.getAttribute('href') || '';
+                    if (text && text.length > 5 && !seen.has(text) && href.includes('/comments/')) {
+                        seen.add(text);
+                        const fullUrl = href.startsWith('/') ? 'https://www.reddit.com' + href : href;
+                        results.push({ title: text, author: 'Reddit User', score: '-', comments: '-', url: fullUrl });
+                    }
+                });
+            }
+            return results.slice(0, 20);
+        }""")
 
         print(f"Total unique posts collected: {len(posts_data)}")
         
