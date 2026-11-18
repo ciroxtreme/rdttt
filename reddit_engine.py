@@ -47,8 +47,8 @@ def send_telegram_photo(photo_path, caption=""):
     except Exception as e:
         print(f"Error sending telegram photo: {e}")
 
-def wait_for_telegram_code(prompt_msg, timeout_sec=240):
-    send_telegram(f"⏳ {prompt_msg}\n\n👉 Kirim balasannya (kode OTP 6 digit / Magic Link / atau 'reddit_session=...') ke chat bot ini dalam {timeout_sec} detik.")
+def wait_for_telegram_code(prompt_msg, timeout_sec=300):
+    send_telegram(f"⏳ {prompt_msg}\n\n👉 Kirim balasannya ke chat bot ini dalam {timeout_sec} detik.")
     start_time = time.time()
     last_update_id = 0
 
@@ -72,35 +72,30 @@ def wait_for_telegram_code(prompt_msg, timeout_sec=240):
                 chat_id = str(msg.get("chat", {}).get("id"))
                 text = msg.get("text", "").strip()
                 if chat_id == str(TELEGRAM_CHAT_ID) and text:
-                    send_telegram(f"✅ Menerima input dari Telegram: '{text[:40]}...', memproses di Reddit...")
+                    send_telegram(f"✅ Menerima balasan dari Telegram: '{text[:50]}...', memproses di Reddit...")
                     return text
         except Exception as e:
             print(f"Error polling telegram: {e}")
 
-    send_telegram("❌ Waktu habis (timeout) menunggu kode verifikasi dari Telegram.")
+    send_telegram("❌ Waktu habis (timeout) menunggu kode/link verifikasi dari Telegram.")
     return None
 
 def deep_fill_shadow_input(page, selector_keywords, value):
-    """
-    Menemukan <input> di dalam Shadow DOM berlapis (<faceplate-text-input> dll),
-    memfokuskan, mengetik nilai asli, dan memicu event input/change composed:true
-    agar Lit/Faceplate form state ter-update dan tombol submit menjadi ENABLED.
-    """
-    # 1. Coba via Playwright native locator (otomatis menembus open shadow roots)
     for sel in selector_keywords:
-        loc = page.locator(sel).first
-        if loc.count() > 0:
+        loc = page.locator(sel)
+        cnt = loc.count()
+        for i in range(cnt):
+            item = loc.nth(i)
             try:
-                loc.scroll_into_view_if_needed(timeout=3000)
-                loc.click(force=True, timeout=3000)
-                # Bersihkan isi sebelumnya
-                loc.fill("")
+                if not item.is_visible(timeout=1500):
+                    continue
+                item.scroll_into_view_if_needed(timeout=2000)
+                item.click(force=True, timeout=2000)
+                item.fill("")
                 time.sleep(0.2)
-                # Ketik karakter per karakter agar event keyboard & faceplate listener aktif
-                loc.press_sequentially(value, delay=35)
+                item.press_sequentially(value, delay=35)
                 time.sleep(0.3)
-                # Dispatch composed input/change events ke atas
-                loc.evaluate("""(el, val) => {
+                item.evaluate("""(el, val) => {
                     if (el.value !== val) {
                         const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
                         nativeSetter.call(el, val);
@@ -109,64 +104,40 @@ def deep_fill_shadow_input(page, selector_keywords, value):
                     el.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
                     el.dispatchEvent(new FocusEvent('blur', { bubbles: true, composed: true }));
                 }""", value)
-                print(f"[SHADOW-FILL] Berhasil mengisi '{sel}' via press_sequentially + composed event!")
+                print(f"[SHADOW-FILL] Berhasil mengisi '{sel}' (nth={i}) via press_sequentially + composed event!")
                 return True
             except Exception as e:
-                print(f"[SHADOW-FILL] Warning pada '{sel}': {e}")
+                print(f"[SHADOW-FILL] Warning pada '{sel}' (nth={i}): {e}")
     return False
 
-def dump_deep_dom_state(page):
-    """Mengekstrak semua elemen interaktif (input, button, a) menembus seluruh Shadow Root."""
-    return page.evaluate("""() => {
-        const items = [];
-        const walk = (root, path = "document") => {
-            if (!root) return;
-            const children = root.querySelectorAll ? root.querySelectorAll('*') : [];
-            for (const el of children) {
-                const tag = el.tagName ? el.tagName.toLowerCase() : '';
-                if (['input', 'button', 'a', 'faceplate-text-input'].includes(tag) || el.getAttribute('role') === 'button') {
-                    const rect = el.getBoundingClientRect();
-                    items.push({
-                        tag,
-                        name: el.getAttribute('name') || '',
-                        id: el.id || '',
-                        type: el.getAttribute('type') || '',
-                        disabled: el.disabled || el.hasAttribute('disabled'),
-                        text: (el.innerText || el.value || '').trim().slice(0, 60),
-                        visible: rect.width > 0 && rect.height > 0,
-                        x: Math.round(rect.x + rect.width / 2),
-                        y: Math.round(rect.y + rect.height / 2),
-                        path
-                    });
-                }
-                if (el.shadowRoot) {
-                    walk(el.shadowRoot, path + " > " + tag + "#shadow");
-                }
-            }
-        };
-        walk(document);
-        return items;
-    }""")
-
-def click_deep_shadow_button(page, text_matches):
-    """Mencari dan mengklik tombol di dalam Shadow DOM baik via koordinat mouse maupun JS click()."""
-    info = page.evaluate("""(targets) => {
+def click_auth_flow_link_by_text(page, target_substring):
+    """
+    Khusus untuk <auth-flow-link> Reddit yang meletakkan teksnya di Light DOM (slot),
+    sedangkan elemen <a role="button"> ada di dalam shadowRoot tanpa innerText!
+    """
+    info = page.evaluate("""(targetSub) => {
+        const sub = targetSub.toLowerCase();
+        // 1. Cek semua auth-flow-link, faceplate-tracker, button, a di Light DOM & Shadow DOM
         const walk = (root) => {
             const els = root.querySelectorAll ? root.querySelectorAll('*') : [];
             for (const el of els) {
                 const tag = el.tagName ? el.tagName.toLowerCase() : '';
-                if (tag === 'button' || tag === 'a' || el.getAttribute('role') === 'button') {
-                    const txt = (el.innerText || el.textContent || '').trim().toLowerCase();
-                    for (const t of targets) {
-                        if (txt === t.toLowerCase() || (txt.includes(t.toLowerCase()) && txt.length < 45)) {
-                            const r = el.getBoundingClientRect();
-                            if (r.width > 0 && r.height > 0) {
-                                el.removeAttribute('disabled');
-                                el.disabled = false;
-                                el.click();
-                                return { found: true, text: txt, x: r.x + r.width / 2, y: r.y + r.height / 2 };
+                const lightText = (el.innerText || el.textContent || '').trim().toLowerCase();
+                if ((tag === 'auth-flow-link' || tag === 'button' || tag === 'a') && lightText.includes(sub) && lightText.length < 60) {
+                    const r = el.getBoundingClientRect();
+                    if (r.width > 0 && r.height > 0) {
+                        if (el.shadowRoot) {
+                            const innerBtn = el.shadowRoot.querySelector('a, button, [role="button"]');
+                            if (innerBtn) {
+                                innerBtn.click();
+                                innerBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, composed: true }));
                             }
                         }
+                        el.removeAttribute('disabled');
+                        el.disabled = false;
+                        el.click();
+                        el.dispatchEvent(new MouseEvent('click', { bubbles: true, composed: true }));
+                        return { found: true, tag, text: lightText, x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) };
                     }
                 }
                 if (el.shadowRoot) {
@@ -177,9 +148,10 @@ def click_deep_shadow_button(page, text_matches):
             return null;
         };
         return walk(document);
-    }""", text_matches)
+    }""", target_substring)
+
     if info and info.get("found"):
-        print(f"[SHADOW-CLICK] Menemukan tombol '{info['text']}' di ({info['x']}, {info['y']}), mengklik mouse...")
+        print(f"[AUTH-FLOW-CLICK] Menemukan <{info['tag']}> '{info['text']}' di ({info['x']}, {info['y']}), mengklik mouse...")
         try:
             page.mouse.click(info["x"], info["y"])
         except Exception:
@@ -195,7 +167,6 @@ def login_and_search_reddit(target="Barca", mode="sub"):
     with Camoufox(headless=True, proxy=proxy_cfg, geoip=True if proxy_cfg else False, i_know_what_im_doing=True) as browser:
         context = browser.new_context(viewport={"width": 1280, "height": 900})
 
-        # Load existing session jika ada
         has_session = False
         if os.path.exists(SESSION_FILE):
             try:
@@ -210,27 +181,21 @@ def login_and_search_reddit(target="Barca", mode="sub"):
 
         page = context.new_page()
 
-        # Pasang network response logger untuk endpoint auth/login Reddit
-        auth_responses = []
         def on_response(resp):
             u = resp.url.lower()
             if any(k in u for k in ["login", "auth", "account", "otp", "one-time", "svc/shreddit"]):
                 try:
                     status = resp.status
                     print(f"🌐 [NET-AUTH] {resp.request.method} {resp.url} -> HTTP {status}")
-                    if status >= 400 or "login" in u or "one-time" in u:
-                        body_preview = ""
+                    if status >= 400 or "login" in u or "one-time" in u or "magic" in u:
                         try:
-                            body_preview = resp.text()[:300]
+                            print(f"   [NET-BODY] {resp.text()[:300]}")
                         except Exception:
                             pass
-                        print(f"   [NET-BODY] {body_preview}")
-                        auth_responses.append({"url": resp.url, "status": status, "body": body_preview})
                 except Exception:
                     pass
         page.on("response", on_response)
 
-        # 1. Pastikan status login
         need_login = True
         if has_session:
             print("Checking session status on reddit.com...")
@@ -245,149 +210,83 @@ def login_and_search_reddit(target="Barca", mode="sub"):
                 print(f"Session check error: {e}")
 
         if need_login:
-            print(f"Starting login flow at https://www.reddit.com/login/ for {REDDIT_USERNAME}...")
-            send_telegram(f"🔑 Membuka halaman login Reddit via Residential Proxy untuk akun: {REDDIT_USERNAME}...")
+            print(f"Opening https://www.reddit.com/login/ via Residential Proxy...")
+            send_telegram(f"🔑 Membuka login Reddit via Residential Proxy & mengaktifkan One-Time Magic Link untuk {REDDIT_EMAIL}...")
             page.goto("https://www.reddit.com/login/", timeout=55000, wait_until="domcontentloaded")
             time.sleep(6)
 
-            dom_items = dump_deep_dom_state(page)
-            print(f"🔍 [DOM INSPECT] Ditemukan {len(dom_items)} elemen interaktif:")
-            for it in dom_items[:25]:
-                print(f"   - {it}")
-
-            # 1. Isi Username dengan Shadow-Piercing Sequential Typing
-            print(f"Filling username: {REDDIT_USERNAME}...")
-            ok_user = deep_fill_shadow_input(
-                page,
-                ["input[name='username']", "input#login-username", "input[autocomplete='username']"],
-                REDDIT_USERNAME
-            )
-
-            # 2. Isi Password dengan Shadow-Piercing Sequential Typing
-            print("Filling password...")
-            ok_pwd = deep_fill_shadow_input(
-                page,
-                ["input[name='password']", "input#login-password", "input[type='password']"],
-                REDDIT_PASSWORD
-            )
-
-            time.sleep(1.5)
-            page.screenshot(path="reddit_before_submit.png")
-            send_telegram_photo("reddit_before_submit.png", "📸 Form login terisi via Residential Proxy & Shadow DOM Typing")
-
-            # Cek status tombol Log In setelah pengisian
-            dom_after_fill = dump_deep_dom_state(page)
-            for it in dom_after_fill:
-                if "log in" in it.get("text", "").lower() or it.get("type") == "submit":
-                    print(f"   [SUBMIT-BTN-STATE] {it}")
-
-            # 3. Klik tombol Log In + tekan Enter
-            print("Submitting login form...")
-            clicked_login = click_deep_shadow_button(page, ["Log In", "Log in"])
-            if not clicked_login:
-                page.keyboard.press("Enter")
-            else:
-                time.sleep(1)
-                page.keyboard.press("Enter")
-
-            time.sleep(7)
-            page.screenshot(path="reddit_after_submit.png")
-            send_telegram_photo("reddit_after_submit.png", "📸 Status layar setelah klik Log In")
-
-            # 4. Cek apakah reddit_session sudah dapat, atau masih kena block / butuh One-Time Link / OTP
-            cookies = context.cookies()
-            session_cookie = next((c for c in cookies if c.get("name") == "reddit_session"), None)
-
-            body_text = page.evaluate("() => document.body ? document.body.innerText : ''")
-            body_lower = body_text.lower()
-            print(f"📄 [BODY TEXT AFTER LOGIN]: {body_text[:400].replace(chr(10), ' ')}")
-
-            # Jika kena 'blocked by network security' atau 'invalid username or password', otomatis coba One-Time Email Link!
-            if not session_cookie and (
-                "blocked by network security" in body_lower
-                or "invalid username or password" in body_lower
-                or "incorrect username or password" in body_lower
-                or "email me a one-time link" in body_lower
-            ):
-                print("⚠️ Standard password login ditolak/butuh verifikasi. Mengaktifkan tombol 'Email me a one-time link'...")
-                send_telegram("🔄 Mengklik tombol 'Email me a one-time link' untuk mengirim Magic Link / OTP ke email...")
-                click_deep_shadow_button(page, ["Email me a one-time link"])
-                time.sleep(4)
-                page.screenshot(path="reddit_onetime_view.png")
-                send_telegram_photo("reddit_onetime_view.png", "📸 Status setelah klik 'Email me a one-time link'")
-
-                body_ot = page.evaluate("() => document.body ? document.body.innerText : ''").lower()
-                if "where should we send" in body_ot or "email" in body_ot:
-                    print(f"Mengisi email {REDDIT_EMAIL} pada form one-time link...")
-                    deep_fill_shadow_input(
-                        page,
-                        ["input[type='email']", "input[name='email']", "input#login-email", "input[name='username']"],
-                        REDDIT_EMAIL
-                    )
-                    time.sleep(1.5)
-                    click_deep_shadow_button(page, ["Continue", "Send link", "Email me"])
-                    page.keyboard.press("Enter")
-                    time.sleep(5)
-                    page.screenshot(path="reddit_onetime_sent.png")
-                    send_telegram_photo("reddit_onetime_sent.png", f"📧 Permintaan One-Time Link/OTP dikirim ke {REDDIT_EMAIL}!")
-
-            # 5. Loop cek HANYA cookie 'reddit_session' (BUKAN token_v2!) atau tunggu OTP / Magic Link / Cookie dari Telegram
-            for attempt in range(1, 10):
-                cookies = context.cookies()
-                session_cookie = next((c for c in cookies if c.get("name") == "reddit_session"), None)
-                if session_cookie:
-                    print(f"🎉 Login success! Found authentic session cookie: reddit_session")
+            # Klik tombol <auth-flow-link> "Email me a one-time link" (di koordinat ~640, 414)
+            for attempt in range(1, 5):
+                body_now = page.evaluate("() => document.body ? document.body.innerText : ''").lower()
+                if "where should we send the link to" in body_now:
+                    print("✅ Berhasil masuk ke layar 'Email me a one-time link to login'!")
                     break
-
-                body_text = page.evaluate("() => document.body ? document.body.innerText : ''").lower()
-                print(f"Check login result (attempt {attempt}/10)...")
-
-                if any(k in body_text for k in ["verification code", "two-factor", "security code", "check your email", "enter code", "6-digit", "we sent a", "one-time link"]) or attempt == 2:
-                    page.screenshot(path="reddit_otp_prompt.png")
-                    send_telegram_photo("reddit_otp_prompt.png", "⚠️ Menunggu Kode OTP / Magic Link / Cookie Sesi Reddit!")
-                    user_inp = wait_for_telegram_code(
-                        f"Silakan kirim salah satu ke chat ini:\n1. Kode 6-digit OTP dari email {REDDIT_EMAIL}\n2. Link Login (https://www.reddit.com/...) dari email\n3. Atau nilai cookie 'reddit_session' dari browser Anda",
-                        timeout_sec=240
-                    )
-                    if user_inp:
-                        if user_inp.startswith("http://") or user_inp.startswith("https://"):
-                            print("Navigating to magic link from Telegram...")
-                            page.goto(user_inp, timeout=50000, wait_until="domcontentloaded")
-                            time.sleep(8)
-                        elif len(user_inp) > 30 and not user_inp.isdigit():
-                            # User mengirim nilai cookie reddit_session secara langsung
-                            val = user_inp.replace("reddit_session=", "").strip()
-                            context.add_cookies([{
-                                "name": "reddit_session",
-                                "value": val,
-                                "domain": ".reddit.com",
-                                "path": "/",
-                                "httpOnly": True,
-                                "secure": True
-                            }])
-                            page.goto("https://www.reddit.com/", timeout=45000, wait_until="domcontentloaded")
-                            time.sleep(5)
-                        else:
-                            deep_fill_shadow_input(
-                                page,
-                                ["input[data-testid='verification-code-input']", "input[name='otp']", "input[name='code']", "input[type='text']", "input[type='number']"],
-                                user_inp
-                            )
-                            time.sleep(1)
-                            click_deep_shadow_button(page, ["Continue", "Verify", "Log In", "Submit"])
-                            page.keyboard.press("Enter")
-                            time.sleep(8)
-                    else:
-                        break
+                print(f"Attempt {attempt}: Clicking <auth-flow-link> 'Email me a one-time link'...")
+                click_auth_flow_link_by_text(page, "Email me a one-time link")
                 time.sleep(3)
 
-            # Pastikan cookie sesi tersimpan (HANYA reddit_session asli yang menandakan login berhasil)
+            page.screenshot(path="reddit_onetime_view.png")
+            send_telegram_photo("reddit_onetime_view.png", "📸 Layar 'Email me a one-time link to login'")
+
+            # Isi email tuanciroxtreme@gmail.com pada form one-time link
+            print(f"Mengisi email {REDDIT_EMAIL} pada form one-time link...")
+            deep_fill_shadow_input(
+                page,
+                ["input[type='email']", "input[name='email']", "input#login-email", "input[name='username']", "input"],
+                REDDIT_EMAIL
+            )
+            time.sleep(1.5)
+            page.screenshot(path="reddit_onetime_filled.png")
+
+            # Klik tombol Continue
+            print("Mengklik tombol 'Continue' untuk mengirim email magic link...")
+            click_auth_flow_link_by_text(page, "Continue")
+            time.sleep(1)
+            page.keyboard.press("Enter")
+            time.sleep(6)
+
+            page.screenshot(path="reddit_onetime_sent.png")
+            send_telegram_photo("reddit_onetime_sent.png", f"📧 Permintaan One-Time Link/OTP dikirim ke {REDDIT_EMAIL}!")
+
+            # Tunggu Magic Link atau Kode OTP dari Tuan Ciro di Telegram
+            user_inp = wait_for_telegram_code(
+                f"Cek inbox Gmail {REDDIT_EMAIL} sekarang!\n\n"
+                f"1. Jika masuk email berisi tombol 'Log In' / Magic Link dari Reddit: tekan tahan tombolnya -> Copy Link URL -> Paste ke chat ini!\n"
+                f"2. Jika masuk kode angka 6-digit: ketik angkanya ke chat ini!",
+                timeout_sec=300
+            )
+
+            if user_inp:
+                if "http://" in user_inp or "https://" in user_inp:
+                    # Ekstrak URL jika ada teks tambahan
+                    import re
+                    urls = re.findall(r"https?://[^\s]+", user_inp)
+                    magic_url = urls[0] if urls else user_inp
+                    print(f"Navigating to magic link: {magic_url}")
+                    send_telegram("🚀 Membuka Magic Link Login di Camoufox...")
+                    page.goto(magic_url, timeout=55000, wait_until="domcontentloaded")
+                    time.sleep(8)
+                else:
+                    print(f"Entering verification code: {user_inp}")
+                    deep_fill_shadow_input(
+                        page,
+                        ["input[data-testid='verification-code-input']", "input[name='otp']", "input[name='code']", "input[type='tel']", "input[type='text']", "input"],
+                        user_inp
+                    )
+                    time.sleep(1)
+                    click_auth_flow_link_by_text(page, "Continue")
+                    click_auth_flow_link_by_text(page, "Check code")
+                    click_auth_flow_link_by_text(page, "Verify")
+                    page.keyboard.press("Enter")
+                    time.sleep(8)
+
+            # Pastikan cookie sesi tersimpan (reddit_session)
             cookies = context.cookies()
+            print("Current cookies names:", [c.get("name") for c in cookies])
             session_cookie = next((c for c in cookies if c.get("name") == "reddit_session"), None)
             if not session_cookie:
                 page.screenshot(path="reddit_login_failed.png")
                 send_telegram_photo("reddit_login_failed.png", "❌ Login Reddit Belum Berhasil! Cookie reddit_session belum terbentuk.")
-                send_telegram("🛑 Proses dihentikan: tidak akan melakukan scraping sebelum login tuntas 100%.")
                 sys.exit(1)
 
             print(f"🎉 SUCCESS! Sesi login resmi terverifikasi via reddit_session!")
@@ -396,7 +295,7 @@ def login_and_search_reddit(target="Barca", mode="sub"):
             page.screenshot(path="reddit_login_success.png")
             send_telegram_photo("reddit_login_success.png", f"🎉 Berhasil Login Reddit! Sesi tersimpan permanen.")
 
-        # 2. HANYA JALAN JIKA LOGIN SUDAH 100% SUKSES:
+        # 2. JALANKAN SCRAPING SUBREDDIT / SEARCH:
         if mode == "sub":
             sub_name = target.replace("r/", "").strip()
             url = f"https://www.reddit.com/r/{sub_name}/"
