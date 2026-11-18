@@ -189,18 +189,18 @@ def login_and_search_reddit(target="Barca", mode="sub"):
 
             # Pastikan cookie sesi tersimpan
             cookies = context.cookies()
-            session_cookie = next((c for c in cookies if c.get("name") == "reddit_session"), None)
+            session_cookie = next((c for c in cookies if c.get("name") in ["reddit_session", "token_v2"]), None)
             if not session_cookie:
                 page.screenshot(path="reddit_login_failed.png")
-                send_telegram_photo("reddit_login_failed.png", "❌ Login Reddit Gagal! Sesi reddit_session belum terbentuk.")
+                send_telegram_photo("reddit_login_failed.png", "❌ Login Reddit Gagal! Sesi login belum terbentuk.")
                 send_telegram("🛑 Proses dihentikan sesuai instruksi: tidak akan melakukan scraping sebelum login tuntas 100%.")
                 sys.exit(1)
 
-            print(f"🎉 SUCCESS! reddit_session terverifikasi!")
+            print(f"🎉 SUCCESS! Sesi login terverifikasi via {session_cookie.get('name')}!")
             with open(SESSION_FILE, "w") as f:
                 json.dump(cookies, f, indent=2)
             page.screenshot(path="reddit_login_success.png")
-            send_telegram_photo("reddit_login_success.png", "🎉 Berhasil Login Reddit! Sesi tersimpan permanen.")
+            send_telegram_photo("reddit_login_success.png", f"🎉 Berhasil Login Reddit ({REDDIT_USERNAME})! Sesi tersimpan permanen.")
 
         # 2. HANYA JALAN JIKA LOGIN SUDAH 100% SUKSES:
         if mode == "sub":
