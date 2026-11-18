@@ -100,88 +100,80 @@ def login_and_search_reddit(target="Barca", mode="sub"):
                 print(f"Session check error: {e}")
 
         if need_login:
-            print(f"Starting login flow at https://www.reddit.com/login/...")
-            send_telegram(f"🔑 Membuka login Reddit. Menunggu hydration Faceplate & custom elements...")
+            print(f"Starting standard credentials login at https://www.reddit.com/login/ for {REDDIT_USERNAME}...")
+            send_telegram(f"🔑 Membuka login Reddit via kredensial: {REDDIT_USERNAME}...")
             page.goto("https://www.reddit.com/login/", timeout=45000, wait_until="domcontentloaded")
+            time.sleep(5)
             
-            # 1. Tunggu custom elements & web components ter-hydrate
-            try:
-                page.wait_for_function("""() => {
-                    const els = [...document.querySelectorAll('*')].filter(e => e.localName.includes('-'));
-                    return els.length > 0 && els.every(e => customElements.get(e.localName));
-                }""", timeout=15000)
-            except Exception as e:
-                print(f"Hydration wait notice: {e}")
-            try:
-                page.wait_for_load_state("networkidle", timeout=10000)
-            except Exception:
-                pass
-            time.sleep(3)
-            
-            # 2. Coba klik tombol "Email me a one-time link" via fokus keyboard & native button
-            print("Activating 'Email me a one-time link'...")
-            for attempt in range(1, 8):
-                body_text = page.evaluate("() => document.body ? document.body.innerText : ''").lower()
-                if "where should we send the link to" in body_text:
-                    print("Found 'where should we send the link to'!")
-                    break
-                    
-                # Cara A: Focus lalu tekan Enter (memicu sintetis browser asli)
+            # 1. Input Username / Email
+            print(f"Filling username/email: {REDDIT_USERNAME}...")
+            user_input = page.locator("input[name='username'], input#login-username, input[autocomplete='username'], input[type='text'], input").first
+            if user_input.count() > 0:
                 try:
-                    btn = page.locator("button, a, div[role='button']").filter(has_text="Email me a one-time link").first
-                    if btn.count() > 0:
-                        btn.focus()
-                        page.keyboard.press("Enter")
-                        time.sleep(1.5)
+                    user_input.click(force=True)
                 except Exception:
                     pass
-                    
-                # Cara B: Dispatch native click event
-                try:
-                    btn = page.locator("button, a, div[role='button']").filter(has_text="Email me a one-time link").first
-                    if btn.count() > 0:
-                        btn.click(force=True)
-                except Exception:
-                    pass
-                time.sleep(2)
-
-            body_text = page.evaluate("() => document.body ? document.body.innerText : ''").lower()
-            if "where should we send the link to" in body_text:
-                page.screenshot(path="reddit_target_page.png")
-                send_telegram_photo("reddit_target_page.png", "✅ Halaman 'Where should we send the link to' aktif!")
-                email_input = page.locator("input[type='email'], input[name='email'], input#login-email, input").first
-                if email_input.count() > 0:
-                    email_input.fill(REDDIT_EMAIL)
-                    time.sleep(1)
-                    page.keyboard.press("Enter")
-                    time.sleep(4)
-
-            page.screenshot(path="reddit_waiting_link.png")
-            send_telegram_photo("reddit_waiting_link.png", "⏳ Status Dialog Login Reddit")
-            
-            # Minta Tuan Ciro paste link login yang masuk ke email
-            user_resp = wait_for_telegram_code(
-                f"Buka email {REDDIT_EMAIL}, copy LINK LOGIN (magic link) dari Reddit lalu kirim ke sini.\n(Jika belum ada, klik 'Email me a one-time link' di browser HP Anda terlebih dahulu lalu paste linknya ke sini).",
-                timeout_sec=300
-            )
-            
-            if user_resp:
-                if user_resp.startswith("http://") or user_resp.startswith("https://"):
-                    print(f"Received one-time magic link: {user_resp}")
-                    send_telegram("🚀 Membuka link login Reddit di browser cloud runner...")
-                    page.goto(user_resp, timeout=50000, wait_until="load")
-                    time.sleep(10)
-                else:
-                    print(f"Received code: {user_resp}")
-                    code_input = page.locator("input[data-testid='verification-code-input'], input[name='otp'], input[name='code'], input[type='number'], input[type='text'], input").first
-                    if code_input.count() > 0:
-                        code_input.fill(user_resp)
-                        time.sleep(1)
-                        page.keyboard.press("Enter")
-                        time.sleep(8)
+                user_input.fill(REDDIT_USERNAME)
+                time.sleep(1)
             else:
-                send_telegram("❌ Login dibatalkan karena tidak ada link/kode yang dimasukkan.")
+                send_telegram("❌ Kolom username/email tidak ditemukan!")
                 sys.exit(1)
+                
+            # 2. Input Password
+            print("Filling password...")
+            pwd_input = page.locator("input[name='password'], input#login-password, input[type='password']").first
+            if pwd_input.count() > 0:
+                try:
+                    pwd_input.click(force=True)
+                except Exception:
+                    pass
+                pwd_input.fill(REDDIT_PASSWORD)
+                time.sleep(1)
+                
+                # 3. Klik tombol Log In / Submit
+                print("Clicking Log In button...")
+                page.screenshot(path="reddit_before_submit.png")
+                send_telegram_photo("reddit_before_submit.png", "Form login terisi, menekan tombol Log In...")
+                
+                login_btn = page.locator("button[type='submit'], button:has-text('Log In'), button:has-text('Log in')").first
+                if login_btn.count() > 0 and login_btn.is_visible():
+                    login_btn.click(force=True)
+                else:
+                    page.keyboard.press("Enter")
+                time.sleep(8)
+            else:
+                send_telegram("❌ Kolom password tidak ditemukan!")
+                sys.exit(1)
+
+            # 4. Deteksi apakah Reddit meminta kode OTP / 2FA / verifikasi
+            for attempt in range(1, 15):
+                cookies = context.cookies()
+                session_cookie = next((c for c in cookies if c.get("name") in ["reddit_session", "token_v2"]), None)
+                if session_cookie:
+                    print(f"Login success! Found session cookie: {session_cookie.get('name')}")
+                    break
+
+                body_text = page.evaluate("() => document.body ? document.body.innerText : ''").lower()
+                print(f"Check login result (attempt {attempt}/15)...")
+                
+                if any(k in body_text for k in ["verification code", "two-factor", "security code", "check your email", "enter code", "6-digit"]):
+                    page.screenshot(path="reddit_otp_prompt.png")
+                    send_telegram_photo("reddit_otp_prompt.png", "⚠️ Reddit meminta Kode Verifikasi / 2FA!")
+                    otp = wait_for_telegram_code(f"Reddit meminta kode verifikasi untuk {REDDIT_USERNAME}.", timeout_sec=240)
+                    if otp:
+                        otp_input = page.locator("input[data-testid='verification-code-input'], input[name='otp'], input[name='code'], input[type='number'], input[type='text'], input").first
+                        if otp_input.count() > 0:
+                            otp_input.fill(otp)
+                            time.sleep(1)
+                            page.keyboard.press("Enter")
+                            time.sleep(8)
+                    else:
+                        send_telegram("❌ Login dibatalkan karena tidak ada kode yang diinputkan.")
+                        sys.exit(1)
+                elif "incorrect username or password" in body_text:
+                    print("Detected 'incorrect username or password'!")
+                    break
+                time.sleep(3)
 
             # Pastikan cookie sesi tersimpan (HANYA reddit_session asli yang menandakan login berhasil)
             cookies = context.cookies()
