@@ -7,7 +7,7 @@ from camoufox.sync_api import Camoufox
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "DUMMY_TELEGRAM_TOKEN_PROTECTED")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "1936436999")
-REDDIT_USERNAME = os.getenv("REDDIT_USERNAME", "Pulup302")
+REDDIT_USERNAME = os.getenv("REDDIT_USERNAME", "Tuanciro")
 REDDIT_PASSWORD = os.getenv("REDDIT_PASSWORD", "ciroxtreme0703")
 SESSION_FILE = "session_reddit.json"
 
@@ -129,41 +129,47 @@ def login_and_search_reddit(target="Barca", mode="sub"):
                 except Exception:
                     pass
                 pwd_input.fill(REDDIT_PASSWORD)
-                time.sleep(1)
+                time.sleep(2)
                 
-                # Klik tombol login / tekan Enter
-                login_btn = page.locator("button[type='submit'], button:has-text('Log In'), button:has-text('Log in')").first
-                if login_btn.count() > 0:
+                # Klik tombol login / submit / tekan Enter
+                login_btn = page.locator("button[type='submit'], button:has-text('Log In'), button:has-text('Log in'), button.login").first
+                if login_btn.count() > 0 and login_btn.is_visible():
                     try:
+                        print("Clicking login submit button...")
                         login_btn.click(force=True)
-                    except Exception:
+                    except Exception as e:
+                        print(f"Click submit failed ({e}), pressing Enter...")
                         page.keyboard.press("Enter")
                 else:
+                    print("Submit button not found/visible, pressing Enter...")
                     page.keyboard.press("Enter")
                     
-                time.sleep(8)
+                time.sleep(10)
             else:
                 send_telegram("❌ Gagal menemukan kolom input password Reddit!")
                 page.screenshot(path="reddit_no_pwd.png")
                 send_telegram_photo("reddit_no_pwd.png", "Input password Reddit hilang")
                 sys.exit(1)
 
-            # Cek apakah butuh 2FA / OTP verifikasi
-            for attempt in range(8):
+            # Cek apakah butuh 2FA / OTP verifikasi atau ada respon login
+            for attempt in range(12):
                 cookies = context.cookies()
-                # Reddit login cookies: 'reddit_session'
-                session_cookie = next((c for c in cookies if c.get("name") == "reddit_session"), None)
+                # Reddit login cookies: 'reddit_session' atau 'token_v2'
+                session_cookie = next((c for c in cookies if c.get("name") in ["reddit_session", "token_v2"]), None)
                 if session_cookie:
-                    print("Found reddit_session cookie!")
+                    print(f"Found session cookie: {session_cookie.get('name')}!")
                     break
                     
                 body_text = page.locator("body").inner_text()
-                if any(k in body_text.lower() for k in ["verification code", "two-factor", "security code", "check your email", "enter code"]):
+                current_url = page.url
+                print(f"Polling login state (attempt {attempt+1}/12): URL={current_url}")
+                
+                if any(k in body_text.lower() for k in ["verification code", "two-factor", "security code", "check your email", "enter code", "one-time password", "enter the 6-digit"]):
                     page.screenshot(path="reddit_need_code.png")
                     send_telegram_photo("reddit_need_code.png", "⚠️ Reddit meminta Kode Verifikasi / 2FA!")
-                    code = wait_for_telegram_code("Reddit meminta kode verifikasi / 2FA.", timeout_sec=180)
+                    code = wait_for_telegram_code(f"Reddit meminta kode verifikasi / 2FA untuk akun {REDDIT_USERNAME}.", timeout_sec=180)
                     if code:
-                        code_input = page.locator("input[data-testid='verification-code-input'], input[name='otp'], input[type='text'], input").first
+                        code_input = page.locator("input[data-testid='verification-code-input'], input[name='otp'], input[name='code'], input[type='number'], input[type='text']").first
                         if code_input.count() > 0:
                             try:
                                 code_input.click(force=True)
@@ -176,6 +182,9 @@ def login_and_search_reddit(target="Barca", mode="sub"):
                     else:
                         send_telegram("❌ Login dibatalkan karena tidak ada kode yang dimasukkan.")
                         sys.exit(1)
+                elif "incorrect username or password" in body_text.lower():
+                    print("Detected incorrect credentials error message!")
+                    break
                 time.sleep(3)
 
             # Pastikan cookie sesi tersimpan
