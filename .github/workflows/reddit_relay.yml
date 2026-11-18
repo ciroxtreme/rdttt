@@ -6,7 +6,7 @@ on:
       mode:
         description: "Mode (search / sub)"
         required: true
-        default: "search"
+        default: "sub"
       target:
         description: "Target query atau nama subreddit (misal: Barca, wallstreetbets, BTC)"
         required: true
@@ -42,10 +42,26 @@ jobs:
             camoufox fetch || true
           fi
 
-      - name: Run Reddit Pulse Engine
+      - name: Run Reddit Pulse Engine with Login Verification
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           PYTHONUNBUFFERED: "1"
         run: |
           xvfb-run -a python -u reddit_engine.py "${{ github.event.inputs.mode }}" "${{ github.event.inputs.target }}"
+
+      - name: Commit Updated Session If Changed
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          git config user.name "Ciro Session Bot"
+          git config user.email "ciro@automated.local"
+          if [ -f session_reddit.json ]; then
+            git add session_reddit.json
+            if ! git diff --cached --quiet; then
+              git commit -m "Auto-persist session_reddit.json [skip ci]"
+              git push origin main
+            else
+              echo "No session changes to commit."
+            fi
+          fi
