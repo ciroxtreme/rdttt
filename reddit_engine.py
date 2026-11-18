@@ -154,13 +154,25 @@ def login_and_search_reddit(target="Barca", mode="sub"):
                 email_input.fill(REDDIT_EMAIL)
                 time.sleep(1)
                 
-                # Submit email request
-                submit_btn = page.locator("button[type='submit'], button:has-text('Email me a link'), button:has-text('Send email'), button:has-text('Continue')").first
-                if submit_btn.count() > 0:
-                    submit_btn.click(force=True)
-                else:
-                    page.keyboard.press("Enter")
-                time.sleep(5)
+                # Submit email request (tekan Enter pada input field atau klik tombol yang terlihat)
+                print("Submitting email request via keyboard Enter & visible submit button...")
+                page.keyboard.press("Enter")
+                time.sleep(2)
+                
+                # Coba cari tombol submit khusus yang visible jika Enter belum ter-trigger
+                try:
+                    submit_candidates = page.locator("button").all()
+                    for b in submit_candidates:
+                        if b.is_visible():
+                            btxt = b.inner_text().lower()
+                            if any(k in btxt for k in ["email me", "send", "continue", "submit"]):
+                                print(f"Clicking visible submit candidate: '{btxt}'")
+                                b.click()
+                                break
+                except Exception as e:
+                    print(f"Candidate submit button click ignored: {e}")
+                    
+                time.sleep(6)
                 
                 page.screenshot(path="reddit_email_sent.png")
                 send_telegram_photo("reddit_email_sent.png", f"📧 Link telah dikirim ke {REDDIT_EMAIL}!")
