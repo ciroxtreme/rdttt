@@ -108,7 +108,7 @@ def login_and_search_reddit(target="Barca", mode="sub"):
             # Cari dan klik tombol "Email me a one-time link" sampai teks target muncul
             print("Searching for 'Email me a one-time link' button...")
             target_found = False
-            for attempt in range(1, 10):
+            for attempt in range(1, 15):
                 # 1. Cek apakah teks target sudah muncul di layar (menandakan sudah di halaman form one-time link)
                 body_text = page.evaluate("() => document.body ? document.body.innerText : ''").lower()
                 if "where should we send the link to" in body_text:
@@ -118,52 +118,40 @@ def login_and_search_reddit(target="Barca", mode="sub"):
 
                 print(f"Attempt {attempt}: Clicking 'Email me a one-time link'...")
                 
-                # Cara 1: Locator filter has-text dan click langsung
+                # Gunakan locator Playwright khusus
                 try:
-                    btn = page.locator("a, button, div").filter(has_text="Email me a one-time link").last
-                    if btn.count() > 0:
-                        btn.scroll_into_view_if_needed()
-                        btn.click(force=True, timeout=3000)
-                        time.sleep(2)
+                    el = page.locator("button, a, div[role='button']").filter(has_text="Email me a one-time link").first
+                    if el.count() > 0:
+                        el.scroll_into_view_if_needed()
+                        el.click(force=True, delay=100)
                 except Exception as e:
-                    print(f"Playwright click error: {e}")
+                    print(f"Locator click: {e}")
 
-                # Cara 2: Native mouse coordinates di titik tengah
-                try:
-                    target_el = page.get_by_text("Email me a one-time link", exact=False).first
-                    if target_el.count() > 0:
-                        box = target_el.bounding_box()
-                        if box:
-                            print(f"Clicking at ({box['x'] + box['width']/2}, {box['y'] + box['height']/2})...")
-                            page.mouse.click(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
-                            time.sleep(2)
-                except Exception as e:
-                    print(f"Bounding box click error: {e}")
-
-                # Cara 3: Pointer down/up dan trigger touch/click event pada elemen terdalam
+                # Gunakan evaluate click langsung pada button/a yang berisi teks tersebut
                 try:
                     page.evaluate("""() => {
-                        const all = document.querySelectorAll('*');
-                        for (let el of all) {
-                            if (el.innerText && el.innerText.trim() === 'Email me a one-time link') {
-                                el.click();
-                                let p = el.parentElement;
-                                while (p && p !== document.body) {
-                                    p.click();
-                                    if (p.tagName === 'A' || p.tagName === 'BUTTON' || p.getAttribute('role') === 'button') {
-                                        p.click();
-                                        break;
-                                    }
-                                    p = p.parentElement;
-                                }
-                                return true;
+                        const xpath = "//*[contains(text(), 'Email me a one-time link')]";
+                        const res = document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+                        if (res) {
+                            res.click();
+                            let target = res.closest('button, a, [role="button"]') || res.parentElement;
+                            if (target) {
+                                target.click();
+                                target.dispatchEvent(new Event('click', { bubbles: true }));
                             }
                         }
-                        return false;
                     }""")
                 except Exception as e:
-                    print(f"Deep click error: {e}")
-                time.sleep(3)
+                    print(f"XPath click: {e}")
+                    
+                time.sleep(2)
+                
+                # Cek lagi setelah klik
+                body_text = page.evaluate("() => document.body ? document.body.innerText : ''").lower()
+                if "where should we send the link to" in body_text:
+                    print(f"Target found on attempt {attempt}!")
+                    target_found = True
+                    break
 
             # Verifikasi akhir keberadaan teks target
             body_text = page.evaluate("() => document.body ? document.body.innerText : ''").lower()
