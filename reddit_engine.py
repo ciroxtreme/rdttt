@@ -117,26 +117,35 @@ def login_and_search_reddit(target="Barca", mode="sub"):
                     break
 
                 print(f"Attempt {attempt}: Clicking 'Email me a one-time link'...")
-                # Coba Playwright locator
+                
+                # Klik langsung via mouse coordinates / bounding box
                 try:
-                    candidates = page.locator("button, a, div[role='button'], span").filter(has_text="Email me a one-time link").all()
-                    for c in candidates:
-                        if c.is_visible():
-                            c.click(force=True)
-                            time.sleep(2)
-                            break
+                    target_el = page.get_by_text("Email me a one-time link", exact=False).first
+                    if target_el.count() > 0:
+                        box = target_el.bounding_box()
+                        if box:
+                            print(f"Found bounding box for target element: {box}, clicking directly...")
+                            page.mouse.click(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+                            time.sleep(3)
                 except Exception as e:
-                    print(f"Locator click error: {e}")
+                    print(f"Bounding box click error: {e}")
 
-                # Coba deep DOM traversal click via JS
+                # Coba deep DOM traversal dispatch event mouse click via JS
                 page.evaluate("""() => {
                     const clickTarget = (root) => {
                         const all = root.querySelectorAll('*');
                         for (let el of all) {
-                            if (el.childNodes.length === 1 && el.innerText && el.innerText.trim().toLowerCase().includes('email me a one-time link')) {
-                                el.click();
-                                if (el.parentElement) el.parentElement.click();
-                                return true;
+                            if (el.innerText && el.innerText.trim().toLowerCase().includes('email me a one-time link')) {
+                                const rect = el.getBoundingClientRect();
+                                if (rect.width > 0 && rect.height > 0) {
+                                    ['mousedown', 'mouseup', 'click'].forEach(evtType => {
+                                        el.dispatchEvent(new MouseEvent(evtType, { bubbles: true, cancelable: true, view: window }));
+                                    });
+                                    if (el.closest('button, a, [role="button"]')) {
+                                        el.closest('button, a, [role="button"]').click();
+                                    }
+                                    return true;
+                                }
                             }
                             if (el.shadowRoot) {
                                 if (clickTarget(el.shadowRoot)) return true;
