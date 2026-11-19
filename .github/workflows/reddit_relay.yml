@@ -1,4 +1,4 @@
-name: Reddit Pulse & Community Relay
+name: Reddit Pulse & Community Relay (Playwright Stealth & WARP)
 
 on:
   workflow_dispatch:
@@ -14,7 +14,8 @@ on:
 
 jobs:
   run-reddit-relay:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
+    timeout-minutes: 8
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -26,23 +27,22 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Cache Camoufox Browser
-        id: camoufox-cache
+      - name: Cache Playwright Browser
+        id: playwright-cache
         uses: actions/cache@v4
         with:
-          path: ~/.cache/camoufox
-          key: ${{ runner.os }}-camoufox-browser-v1
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-chromium-v1
 
-      - name: Fast Setup Dependencies
+      - name: Fast Setup Playwright & Dependencies
         run: |
-          sudo apt-get update -y
-          sudo apt-get install -y --no-install-recommends xvfb curl
-          pip install "camoufox[geoip]" requests
-          if [ ! -d ~/.cache/camoufox ] || [ -z "$(ls -A ~/.cache/camoufox 2>/dev/null)" ]; then
-            camoufox fetch || true
+          sudo apt-get update -y && sudo apt-get install -y --no-install-recommends xvfb curl
+          pip install --no-cache-dir playwright playwright-stealth requests
+          if [ ! -d ~/.cache/ms-playwright ] || [ -z "$(ls -A ~/.cache/ms-playwright 2>/dev/null)" ]; then
+            playwright install chromium
           fi
 
-      - name: Run Reddit Pulse Engine with Login Verification
+      - name: Run Reddit Pulse Engine with Playwright
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}

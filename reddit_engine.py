@@ -5,7 +5,8 @@ import time
 import json
 import urllib.parse
 import requests
-from camoufox.sync_api import Camoufox
+from playwright.sync_api import sync_playwright
+from playwright_stealth import Stealth
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "1936436999")
@@ -225,8 +226,23 @@ def run_session_workflow(target, mode, proxy_cfg):
     proxy_label = f"Residential Proxy ({proxy_cfg['server']})" if proxy_cfg else "Direct IP"
     print(f"Starting Camoufox with {proxy_label}...")
 
-    with Camoufox(headless=True, proxy=proxy_cfg, geoip=True if proxy_cfg else False, i_know_what_im_doing=True) as browser:
-        context = browser.new_context(viewport={"width": 1280, "height": 900})
+    with Stealth().use_sync(sync_playwright()) as p:
+        browser_args = [
+            "--no-sandbox",
+            "--disable-setuid-sandbox",
+            "--disable-dev-shm-usage",
+            "--disable-blink-features=AutomationControlled",
+            "--window-size=1280,900"
+        ]
+        launch_kwargs = {"headless": True, "args": browser_args}
+        if proxy_cfg:
+            launch_kwargs["proxy"] = proxy_cfg
+
+        browser = p.chromium.launch(**launch_kwargs)
+        context = browser.new_context(
+            viewport={"width": 1280, "height": 900},
+            user_agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
+        )
 
         has_session = False
         if os.path.exists(SESSION_FILE):
