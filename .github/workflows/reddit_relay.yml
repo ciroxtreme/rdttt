@@ -42,6 +42,17 @@ jobs:
             playwright install chromium
           fi
 
+      - name: Restore Reddit session from secret
+        env:
+          REDDIT_SESSION_JSON: ${{ secrets.REDDIT_SESSION_JSON }}
+        run: |
+          if [ -n "$REDDIT_SESSION_JSON" ]; then
+            printf '%s' "$REDDIT_SESSION_JSON" > session_reddit.json
+            echo "Session restored from REDDIT_SESSION_JSON secret."
+          else
+            echo "No REDDIT_SESSION_JSON secret yet — engine will log in via magic link."
+          fi
+
       - name: Run Reddit Pulse Engine with Playwright
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -54,18 +65,15 @@ jobs:
         run: |
           xvfb-run -a python -u reddit_engine.py "${{ github.event.inputs.mode }}" "${{ github.event.inputs.target }}"
 
-      - name: Commit Updated Session If Changed
+      - name: Save Reddit session to secret
+        if: always()
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
         run: |
-          git config user.name "Ciro Session Bot"
-          git config user.email "ciro@automated.local"
           if [ -f session_reddit.json ]; then
-            git add session_reddit.json
-            if ! git diff --cached --quiet; then
-              git commit -m "Auto-persist session_reddit.json [skip ci]"
-              git push origin main
-            else
-              echo "No session changes to commit."
-            fi
+            gh secret set REDDIT_SESSION_JSON < session_reddit.json
+            echo "Session saved to REDDIT_SESSION_JSON secret."
+            rm -f session_reddit.json
+          else
+            echo "No session file — nothing to save."
           fi
