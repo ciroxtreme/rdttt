@@ -11,7 +11,7 @@ from playwright_stealth import Stealth
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "1936436999")
 REDDIT_USERNAME = os.getenv("REDDIT_USERNAME", "Tuanciro")
-REDDIT_PASSWORD = os.getenv("REDDIT_PASSWORD", "ciroxtreme0703")
+REDDIT_PASSWORD = os.getenv("REDDIT_PASSWORD", "")
 REDDIT_EMAIL = os.getenv("REDDIT_EMAIL", "tuanciroxtreme@gmail.com")
 WEBSHARE_PROXY = os.getenv("WEBSHARE_PROXY", "")
 SESSION_FILE = "session_reddit.json"
